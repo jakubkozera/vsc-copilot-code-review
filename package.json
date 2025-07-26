@@ -39,9 +39,9 @@
     ],
     "chatParticipants": [
       {
-        "id": "lgtm",
-        "name": "lgtm",
-        "fullName": "LGTM",
+        "id": "codereview",
+        "name": "codereview",
+        "fullName": "Github Copilot Code Reviewer",
         "description": "Review source code changes",
         "isSticky": false,
         "commands": [

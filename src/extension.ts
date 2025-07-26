@@ -14,7 +14,7 @@ let chatParticipant: vscode.ChatParticipant;
 
 // called the first time a command is executed
 export function activate(context: vscode.ExtensionContext) {
-    chatParticipant = vscode.chat.createChatParticipant('lgtm', handleChat);
+    chatParticipant = vscode.chat.createChatParticipant('codereview', handleChat);
     chatParticipant.iconPath = vscode.Uri.joinPath(
         context.extensionUri,
         'images/chat_icon.png'

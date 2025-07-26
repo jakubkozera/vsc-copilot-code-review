@@ -15,5 +15,14 @@
     },
     "editor.codeActionsOnSave": {
         "source.organizeImports": "always"
+    },
+    "editor.semanticTokenColorCustomizations": {
+        "rules": {
+            "interface": {
+                "foreground": "#b8ce82"
+            },
+            "namespace": "#ccc",
+            "enum": "#b8ce82"
+        }
     }
 }
