@@ -29,17 +29,17 @@
 
     function setupEventListeners() {
         // Branch selection
-        baseBranchSelect.addEventListener('change', updateReviewButtons);
-        targetBranchSelect.addEventListener('change', updateReviewButtons);
+        baseBranchSelect?.addEventListener('change', updateReviewButtons);
+        targetBranchSelect?.addEventListener('change', updateReviewButtons);
 
         // Review buttons
-        reviewCommittedBtn.addEventListener('click', () => {
+        reviewCommittedBtn?.addEventListener('click', () => {
             if (!isReviewing) {
                 startReview('committed');
             }
         });
 
-        reviewAllBtn.addEventListener('click', () => {
+        reviewAllBtn?.addEventListener('click', () => {
             if (!isReviewing) {
                 startReview('all');
             }
@@ -60,6 +60,9 @@
         switch (message.type) {
             case 'branchesLoaded':
                 populateBranches(message.branches, message.currentBranch, message.defaultBase);
+                break;
+            case 'filesListLoaded':
+                handleFilesListLoaded(message.files, message.baseBranch, message.targetBranch);
                 break;
             case 'reviewStarted':
                 handleReviewStarted();
@@ -83,27 +86,31 @@
         currentBranches = branches;
 
         // Clear existing options
-        baseBranchSelect.innerHTML = '<option value="">Select base branch...</option>';
-        targetBranchSelect.innerHTML = '<option value="">Select target branch...</option>';
+        if (baseBranchSelect) {
+            baseBranchSelect.innerHTML = '<option value="">Select base branch...</option>';
+        }
+        if (targetBranchSelect) {
+            targetBranchSelect.innerHTML = '<option value="">Select target branch...</option>';
+        }
 
         // Populate branches
         branches.forEach(branch => {
             const baseOption = document.createElement('option');
             baseOption.value = branch;
             baseOption.textContent = branch;
-            baseBranchSelect.appendChild(baseOption);
+            baseBranchSelect?.appendChild(baseOption);
 
             const targetOption = document.createElement('option');
             targetOption.value = branch;
             targetOption.textContent = branch;
-            targetBranchSelect.appendChild(targetOption);
+            targetBranchSelect?.appendChild(targetOption);
         });
 
         // Set defaults
-        if (currentBranch) {
+        if (currentBranch && targetBranchSelect) {
             targetBranchSelect.value = currentBranch;
         }
-        if (defaultBase) {
+        if (defaultBase && baseBranchSelect) {
             baseBranchSelect.value = defaultBase;
         }
 
@@ -111,31 +118,81 @@
     }
 
     function updateReviewButtons() {
-        const baseBranch = baseBranchSelect.value;
-        const targetBranch = targetBranchSelect.value;
+        const baseBranch = baseBranchSelect?.value || '';
+        const targetBranch = targetBranchSelect?.value || '';
         
         if (baseBranch && targetBranch && baseBranch !== targetBranch) {
-            reviewButtons.classList.remove('hidden');
-            showPreview(baseBranch, targetBranch);
+            reviewButtons?.classList.remove('hidden');
+            requestFilesList(baseBranch, targetBranch);
         } else {
-            reviewButtons.classList.add('hidden');
-            previewSection.classList.add('hidden');
-            statusSection.classList.add('hidden');
-            resultsSection.classList.add('hidden');
+            reviewButtons?.classList.add('hidden');
+            previewSection?.classList.add('hidden');
+            statusSection?.classList.add('hidden');
+            resultsSection?.classList.add('hidden');
         }
     }
 
-    function showPreview(baseBranch, targetBranch) {
-        previewSection.classList.remove('hidden');
-        previewFiles.innerHTML = `
-            <div class="file-item">📄 Reviewing changes from <strong>${baseBranch}</strong> to <strong>${targetBranch}</strong></div>
-            <div class="file-item">🔍 Click a review button to start analysis...</div>
-        `;
+    function requestFilesList(baseBranch, targetBranch) {
+        vscode.postMessage({
+            type: 'getFilesList',
+            baseBranch: baseBranch,
+            targetBranch: targetBranch,
+            reviewType: 'committed' // Default to committed for preview
+        });
+    }
+
+    function handleFilesListLoaded(files, baseBranch, targetBranch) {
+        previewSection?.classList.remove('hidden');
+        
+        if (!files || files.length === 0) {
+            if (previewFiles) {
+                previewFiles.innerHTML = `
+                    <div class="file-item">No files changed between <strong>${baseBranch}</strong> and <strong>${targetBranch}</strong></div>
+                `;
+            }
+            return;
+        }
+
+        let html = `<div class="file-item">Reviewing changes from <strong>${baseBranch}</strong> to <strong>${targetBranch}</strong></div>`;
+        
+        files.forEach(file => {
+            const fileName = getFileName(file.name);
+            const statusClass = getStatusClass(file.status);
+            const fileIcon = getFileIcon();
+            html += `<div class="file-item ${statusClass}">${fileIcon}${fileName}</div>`;
+        });
+        
+        html += `<div class="file-item">Click a review button to start analysis...</div>`;
+        
+        if (previewFiles) {
+            previewFiles.innerHTML = html;
+        }
+    }
+
+    function getFileName(filePath) {
+        // Extract just the filename from the full path
+        const parts = filePath.split('/');
+        return parts[parts.length - 1];
+    }
+
+    function getStatusClass(status) {
+        switch (status) {
+            case 'A': return 'status-added';    // Added
+            case 'M': return 'status-modified'; // Modified  
+            case 'D': return 'status-deleted';  // Deleted
+            case 'R': return 'status-renamed';  // Renamed
+            case 'C': return 'status-copied';   // Copied
+            default: return '';
+        }
+    }
+
+    function getFileIcon() {
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="file-icon"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" /></svg>`;
     }
 
     function startReview(reviewType) {
-        const baseBranch = baseBranchSelect.value;
-        const targetBranch = targetBranchSelect.value;
+        const baseBranch = baseBranchSelect?.value || '';
+        const targetBranch = targetBranchSelect?.value || '';
 
         if (!baseBranch || !targetBranch) {
             showError('Please select both base and target branches');
@@ -143,8 +200,8 @@
         }
 
         isReviewing = true;
-        reviewCommittedBtn.disabled = true;
-        reviewAllBtn.disabled = true;
+        if (reviewCommittedBtn) reviewCommittedBtn.disabled = true;
+        if (reviewAllBtn) reviewAllBtn.disabled = true;
 
         vscode.postMessage({
             type: 'reviewChanges',
@@ -155,53 +212,56 @@
     }
 
     function handleReviewStarted() {
-        statusSection.classList.remove('hidden');
-        resultsSection.classList.add('hidden');
-        statusMessage.textContent = 'Starting code review...';
-        progressBar.classList.remove('hidden');
-        progressFill.style.width = '10%';
+        previewSection?.classList.add('hidden');
+        statusSection?.classList.remove('hidden');
+        resultsSection?.classList.add('hidden');
+        if (statusMessage) statusMessage.textContent = 'Starting code review...';
+        progressBar?.classList.remove('hidden');
+        if (progressFill) progressFill.style.width = '10%';
     }
 
     function handleReviewProgress(message) {
-        statusMessage.textContent = message;
+        if (statusMessage) statusMessage.textContent = message;
         // Simulate progress increase
-        const currentWidth = parseInt(progressFill.style.width) || 10;
+        const currentWidth = parseInt(progressFill?.style.width || '10') || 10;
         const newWidth = Math.min(currentWidth + 20, 90);
-        progressFill.style.width = newWidth + '%';
+        if (progressFill) progressFill.style.width = newWidth + '%';
     }
 
     function handleReviewCompleted(results, errors) {
         isReviewing = false;
-        reviewCommittedBtn.disabled = false;
-        reviewAllBtn.disabled = false;
+        if (reviewCommittedBtn) reviewCommittedBtn.disabled = false;
+        if (reviewAllBtn) reviewAllBtn.disabled = false;
         
-        progressFill.style.width = '100%';
-        statusMessage.textContent = 'Review completed!';
+        if (progressFill) progressFill.style.width = '100%';
+        if (statusMessage) statusMessage.textContent = 'Review completed!';
         
         setTimeout(() => {
-            statusSection.classList.add('hidden');
+            statusSection?.classList.add('hidden');
             showResults(results, errors);
         }, 1000);
     }
 
     function handleReviewError(message) {
         isReviewing = false;
-        reviewCommittedBtn.disabled = false;
-        reviewAllBtn.disabled = false;
+        if (reviewCommittedBtn) reviewCommittedBtn.disabled = false;
+        if (reviewAllBtn) reviewAllBtn.disabled = false;
         
-        progressBar.classList.add('hidden');
-        statusMessage.innerHTML = `<div class="error-message">Error: ${message}</div>`;
+        progressBar?.classList.add('hidden');
+        if (statusMessage) statusMessage.innerHTML = `<div class="error-message">Error: ${message}</div>`;
     }
 
     function showResults(results, errors) {
-        resultsSection.classList.remove('hidden');
+        resultsSection?.classList.remove('hidden');
         
         if (!results || results.length === 0) {
-            reviewResults.innerHTML = `
-                <div class="empty-state">
-                    ✅ No issues found in the code review!
-                </div>
-            `;
+            if (reviewResults) {
+                reviewResults.innerHTML = `
+                    <div class="empty-state">
+                        ✅ No issues found in the code review!
+                    </div>
+                `;
+            }
             return;
         }
 
@@ -210,7 +270,7 @@
         results.forEach(file => {
             html += `
                 <div class="result-file">
-                    <div class="result-file-header">📄 ${file.target}</div>
+                    <div class="result-file-header">${getFileIcon()} ${file.target}</div>
                     <div class="result-comments">
             `;
             
@@ -239,36 +299,38 @@
             `;
         }
 
-        reviewResults.innerHTML = html;
-        
-        // Add click event listeners to comment elements
-        const commentElements = reviewResults.querySelectorAll('.result-comment[data-file-path]');
-        commentElements.forEach(element => {
-            element.addEventListener('click', () => {
-                const filePath = element.getAttribute('data-file-path');
-                const lineAttr = element.getAttribute('data-line');
-                const comment = element.getAttribute('data-comment');
-                
-                console.log('Comment clicked:', { filePath, lineAttr, comment });
-                
-                if (filePath && lineAttr && comment) {
-                    const line = parseInt(lineAttr, 10);
-                    console.log('Sending openFile message:', { filePath, line, comment });
-                    vscode.postMessage({
-                        type: 'openFile',
-                        filePath: filePath,
-                        line: line,
-                        comment: comment
-                    });
-                }
+        if (reviewResults) {
+            reviewResults.innerHTML = html;
+            
+            // Add click event listeners to comment elements
+            const commentElements = reviewResults.querySelectorAll('.result-comment[data-file-path]');
+            commentElements.forEach(element => {
+                element.addEventListener('click', () => {
+                    const filePath = element.getAttribute('data-file-path');
+                    const lineAttr = element.getAttribute('data-line');
+                    const comment = element.getAttribute('data-comment');
+                    
+                    console.log('Comment clicked:', { filePath, lineAttr, comment });
+                    
+                    if (filePath && lineAttr && comment) {
+                        const line = parseInt(lineAttr, 10);
+                        console.log('Sending openFile message:', { filePath, line, comment });
+                        vscode.postMessage({
+                            type: 'openFile',
+                            filePath: filePath,
+                            line: line,
+                            comment: comment
+                        });
+                    }
+                });
             });
-        });
+        }
     }
 
     function showError(message) {
-        statusSection.classList.remove('hidden');
-        statusMessage.innerHTML = `<div class="error-message">${escapeHtml(message)}</div>`;
-        progressBar.classList.add('hidden');
+        statusSection?.classList.remove('hidden');
+        if (statusMessage) statusMessage.innerHTML = `<div class="error-message">${escapeHtml(message)}</div>`;
+        progressBar?.classList.add('hidden');
     }
 
     function escapeHtml(text) {

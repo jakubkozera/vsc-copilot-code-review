@@ -7,6 +7,7 @@ import { getConfig } from './config';
 
 type WebviewMessage = 
     | { type: 'getBranches' }
+    | { type: 'getFilesList'; targetBranch: string; baseBranch: string; reviewType: 'committed' | 'all' }
     | { type: 'reviewChanges'; targetBranch: string; baseBranch: string; reviewType: 'committed' | 'all' }
     | { type: 'openFile'; filePath: string; line: number; comment: string }
     | { type: 'nextComment' }
@@ -49,6 +50,9 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             switch (data.type) {
                 case 'getBranches':
                     await this._getBranches();
+                    break;
+                case 'getFilesList':
+                    await this._getFilesList(data.targetBranch, data.baseBranch, data.reviewType);
                     break;
                 case 'reviewChanges':
                     await this._reviewChanges(data.targetBranch, data.baseBranch, data.reviewType);
@@ -98,6 +102,37 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             this._view?.webview.postMessage({
                 type: 'error',
                 message: 'Failed to load branches'
+            });
+        }
+    }
+
+    private async _getFilesList(targetBranch: string, baseBranch: string, _reviewType: 'committed' | 'all') {
+        // Suppress unused parameter warning
+        void _reviewType;
+        
+        if (!this._config) {
+            this._config = await getConfig();
+        }
+
+        try {
+            const scope: ReviewScope = await this._config.git.getReviewScope(targetBranch, baseBranch);
+            const changedFiles = await this._config.git.getChangedFiles(scope);
+            
+            this._view?.webview.postMessage({
+                type: 'filesListLoaded',
+                files: changedFiles.map(file => ({
+                    name: file.file,
+                    status: file.status,
+                    from: file.from
+                })),
+                baseBranch,
+                targetBranch
+            });
+        } catch (error) {
+            console.error('Error getting files list:', error);
+            this._view?.webview.postMessage({
+                type: 'error',
+                message: 'Failed to load files list'
             });
         }
     }
