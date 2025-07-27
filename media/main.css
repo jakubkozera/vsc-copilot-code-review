@@ -39,16 +39,16 @@ body {
 .branch-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
 }
 
 .branch-button {
-    padding: 4px 8px;
+    padding: 2px 6px;
     border: 1px solid var(--vscode-input-border);
     border-radius: 2px;
     background-color: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
@@ -56,9 +56,10 @@ body {
     transition: all 0.2s ease;
     text-align: center;
     white-space: nowrap;
-    max-width: 200px;
+    max-width: 280px;
     overflow: hidden;
     text-overflow: ellipsis;
+    position: relative;
 }
 
 .branch-button:hover {
@@ -68,6 +69,55 @@ body {
 .branch-button:focus {
     outline: 1px solid var(--vscode-focusBorder);
     border-color: var(--vscode-focusBorder);
+}
+
+/* Tooltip functionality */
+.branch-button::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: var(--vscode-editorHoverWidget-background);
+    color: var(--vscode-editorHoverWidget-foreground);
+    border: 1px solid var(--vscode-editorHoverWidget-border);
+    padding: 4px 8px;
+    font-size: 11px;
+    white-space: nowrap;
+    border-radius: 3px;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    z-index: 1000;
+    margin-bottom: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.branch-button:hover::after {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Tooltip arrow */
+.branch-button::before {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: var(--vscode-editorHoverWidget-border);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    z-index: 1001;
+}
+
+.branch-button:hover::before {
+    opacity: 1;
+    visibility: visible;
 }
 
 .branch-button .icon-tabler-cloud {
@@ -92,18 +142,19 @@ body {
 }
 
 .arrow {
-    font-size: 14px;
+    font-size: 12px;
     color: var(--vscode-foreground);
-    min-width: 16px;
+    min-width: 12px;
     text-align: center;
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
 }
 
 .arrow svg {
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
 }
 
 .review-buttons {

@@ -161,12 +161,18 @@
                 if (baseBranchText) {
                     baseBranchText.innerHTML = formatBranchDisplay(message.branch);
                 }
+                if (baseBranchButton) {
+                    baseBranchButton.title = message.branch;
+                }
                 updateReviewButtons();
                 break;
             case 'targetBranchSelected':
                 selectedTargetBranch = message.branch;
                 if (targetBranchText) {
                     targetBranchText.innerHTML = formatBranchDisplay(message.branch);
+                }
+                if (targetBranchButton) {
+                    targetBranchButton.title = message.branch;
                 }
                 updateReviewButtons();
                 break;
@@ -203,11 +209,17 @@
             if (targetBranchText) {
                 targetBranchText.innerHTML = formatBranchDisplay(currentBranch);
             }
+            if (targetBranchButton) {
+                targetBranchButton.title = currentBranch;
+            }
         }
         if (defaultBase) {
             selectedBaseBranch = defaultBase;
             if (baseBranchText) {
                 baseBranchText.innerHTML = formatBranchDisplay(defaultBase);
+            }
+            if (baseBranchButton) {
+                baseBranchButton.title = defaultBase;
             }
         }
 
