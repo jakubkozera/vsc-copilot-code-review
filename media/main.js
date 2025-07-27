@@ -352,10 +352,14 @@
         statusSection?.classList.add('hidden');
         resultsSection?.classList.remove('hidden');
         
+        // Hide the branch comparison section since it's not relevant for chat reviews
+        const branchComparisonSection = document.getElementById('branchComparisonSection');
+        branchComparisonSection?.classList.add('hidden');
+        
         // Hide the review status spinner since this is from chat
         reviewStatus?.classList.add('hidden');
         
-        console.log('UI prepared for chat review results');
+        console.log('UI prepared for chat review results - irrelevant sections hidden');
     }
 
     function handleReviewProgress(message) {
@@ -451,7 +455,7 @@
                 html += `
                     <div class="result-comment severity-${comment.severity}" data-file-path="${escapeHtml(file.target)}" data-line="${comment.line}" data-comment="${escapeHtml(comment.comment)}">
                         <div class="comment-line">Line ${comment.line}</div>
-                        <div class="comment-text">${escapeHtml(comment.comment)}</div>
+                        <div class="comment-text">${parseMarkdown(comment.comment)}</div>
                     </div>
                 `;
             });
@@ -553,6 +557,52 @@
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    // Simple markdown parser for comment text
+    function parseMarkdown(text) {
+        if (!text) return '';
+        
+        // Escape HTML first, but we'll selectively allow markdown
+        let result = escapeHtml(text);
+        
+        // Code blocks first (to avoid conflicts with inline code)
+        result = result.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+        
+        // Inline code: `code`
+        result = result.replace(/`([^`]+)`/g, '<code>$1</code>');
+        
+        // Bold: **text** or __text__ (but not if inside code)
+        result = result.replace(/(?!<code[^>]*>.*)\*\*((?:(?!\*\*).)*)\*\*(?![^<]*<\/code>)/g, '<strong>$1</strong>');
+        result = result.replace(/(?!<code[^>]*>.*)\b__((?:(?!__).)*?)__\b(?![^<]*<\/code>)/g, '<strong>$1</strong>');
+        
+        // Italic: *text* or _text_ (but not if inside code, and not if it's part of bold)
+        result = result.replace(/(?!<code[^>]*>.*)\*([^*\s][^*]*[^*\s]|\S)\*(?![^<]*<\/code>)/g, '<em>$1</em>');
+        result = result.replace(/(?!<code[^>]*>.*)(?<!\w)_([^_\s][^_]*[^_\s]|\S)_(?!\w)(?![^<]*<\/code>)/g, '<em>$1</em>');
+        
+        // Links: [text](url)
+        result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+        
+        // Headers: # Header, ## Header, etc.
+        result = result.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+        result = result.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+        result = result.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+        
+        // Lists: - item or * item (but not if inside code blocks)
+        result = result.replace(/^[\-\*]\s+(.+)$/gm, function(match, p1) {
+            // Simple check to avoid processing inside code blocks
+            return '<li>' + p1 + '</li>';
+        });
+        
+        // Wrap consecutive list items in ul tags
+        result = result.replace(/(<li>.*?<\/li>)(\s*<li>.*?<\/li>)*/g, function(match) {
+            return '<ul>' + match + '</ul>';
+        });
+        
+        // Line breaks: convert \n to <br> (but not inside pre/code blocks)
+        result = result.replace(/\n(?![^<]*<\/(?:pre|code)>)/g, '<br>');
+        
+        return result;
     }
 
 })();

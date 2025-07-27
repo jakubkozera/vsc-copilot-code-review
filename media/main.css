@@ -528,6 +528,107 @@ body {
     line-height: 1.4;
 }
 
+/* Markdown styles for comment text */
+.comment-text strong {
+    font-weight: 600;
+    color: var(--vscode-foreground);
+}
+
+.comment-text em {
+    font-style: italic;
+    color: var(--vscode-foreground);
+}
+
+.comment-text code {
+    background-color: var(--vscode-textCodeBlock-background);
+    color: var(--vscode-textPreformat-foreground);
+    padding: 2px 4px;
+    border-radius: 2px;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 12px;
+    border: 1px solid var(--vscode-panel-border);
+}
+
+.comment-text pre {
+    background-color: var(--vscode-textCodeBlock-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    padding: 8px;
+    margin: 8px 0;
+    overflow-x: auto;
+    font-family: var(--vscode-editor-font-family);
+}
+
+.comment-text pre code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    border: none;
+    color: var(--vscode-textPreformat-foreground);
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+.comment-text a {
+    color: var(--vscode-textLink-foreground);
+    text-decoration: none;
+}
+
+.comment-text a:hover {
+    color: var(--vscode-textLink-activeForeground);
+    text-decoration: underline;
+}
+
+.comment-text a:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 2px;
+}
+
+.comment-text ul {
+    margin: 8px 0;
+    padding-left: 20px;
+    list-style-type: disc;
+}
+
+.comment-text li {
+    margin: 2px 0;
+    color: var(--vscode-foreground);
+    line-height: 1.4;
+}
+
+.comment-text h1, .comment-text h2, .comment-text h3 {
+    margin: 12px 0 6px 0;
+    color: var(--vscode-foreground);
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.comment-text h1 {
+    font-size: 16px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    padding-bottom: 4px;
+}
+
+.comment-text h2 {
+    font-size: 15px;
+}
+
+.comment-text h3 {
+    font-size: 14px;
+}
+
+/* Improve spacing and readability */
+.comment-text br + br {
+    display: block;
+    margin: 4px 0;
+    content: "";
+}
+
+.comment-text p {
+    margin: 8px 0;
+    line-height: 1.4;
+}
+
 .comment-severity {
     display: none;
 }

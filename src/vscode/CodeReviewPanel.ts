@@ -384,8 +384,14 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             const currentNum = index + 1;
             const totalNum = this._allComments.length;
             
+            // Create a MarkdownString and enable command URIs and HTML
+            const markdownBody = new vscode.MarkdownString();
+            markdownBody.appendMarkdown(`**codeReview Review Comment (${currentNum}/${totalNum}):**\n\n${commentData.comment}`);
+            markdownBody.isTrusted = true; // Allow command URIs
+            markdownBody.supportHtml = true; // Allow HTML for better markdown rendering
+            
             const comment: vscode.Comment = {
-                body: new vscode.MarkdownString(`**codeReview Review Comment (${currentNum}/${totalNum}):**\n\n${commentData.comment}`),
+                body: markdownBody,
                 mode: vscode.CommentMode.Preview,
                 author: { name: 'codeReview Bot', iconPath: vscode.Uri.joinPath(this._extensionUri, 'images/icon.png') },
                 contextValue: 'codeReview-comment'
@@ -556,7 +562,7 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
 </head>
 <body>
     <div class="container">
-        <div class="section">
+        <div class="section" id="branchComparisonSection">
             <h3>
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-git-pull-request">
                     <path stroke="none" d="M0 0h24v24H0z" fill="none"/>

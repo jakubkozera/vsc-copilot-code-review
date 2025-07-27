@@ -158,7 +158,7 @@ async function handleChat(
             await codeReviewPanel.displayChatReviewResults(results);
             
             // Send message to indicate results are available in the Source Control panel with a clickable command
-            stream.markdown(`\n\n📋 **Review results are also available in the Source Control panel**\n\n`);
+            stream.markdown(`\n\n**Review results are also available in the Source Control panel**\n\n`);
             stream.button({
                 command: 'codeReview.openCodeReviewPanel',
                 title: 'Open Code Review Panel'
