@@ -40,6 +40,9 @@
     });
 
     function setupEventListeners() {
+        // Section collapse/expand functionality
+        setupSectionCollapse();
+        
         // Branch selection
         baseBranchButton?.addEventListener('click', () => {
             vscode.postMessage({ type: 'selectBaseBranch' });
@@ -102,6 +105,76 @@
         });
     }
 
+    function setupSectionCollapse() {
+        // Add click listeners to all section headers
+        const sectionHeaders = document.querySelectorAll('.section-header');
+        sectionHeaders.forEach(header => {
+            header.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sectionId = header.getAttribute('data-section');
+                if (sectionId) {
+                    toggleSection(sectionId);
+                }
+            });
+        });
+    }
+
+    function toggleSection(sectionId) {
+        const section = document.getElementById(sectionId);
+        const header = section?.querySelector('.section-header');
+        const content = section?.querySelector('.section-content');
+        const chevron = header?.querySelector('.section-chevron');
+        
+        if (!section || !header || !content || !chevron) {
+            console.warn('Section elements not found for:', sectionId);
+            return;
+        }
+        
+        const isCollapsed = section.classList.contains('collapsed');
+        
+        if (isCollapsed) {
+            // Expand section
+            section.classList.remove('collapsed');
+            content.classList.remove('collapsed');
+            chevron.classList.remove('collapsed');
+            console.log('Expanded section:', sectionId);
+        } else {
+            // Collapse section
+            section.classList.add('collapsed');
+            content.classList.add('collapsed');
+            chevron.classList.add('collapsed');
+            console.log('Collapsed section:', sectionId);
+        }
+    }
+
+    function expandSection(sectionId) {
+        const section = document.getElementById(sectionId);
+        const header = section?.querySelector('.section-header');
+        const content = section?.querySelector('.section-content');
+        const chevron = header?.querySelector('.section-chevron');
+        
+        if (section && header && content && chevron) {
+            section.classList.remove('collapsed');
+            content.classList.remove('collapsed');
+            chevron.classList.remove('collapsed');
+            console.log('Force expanded section:', sectionId);
+        }
+    }
+
+    function collapseSection(sectionId) {
+        const section = document.getElementById(sectionId);
+        const header = section?.querySelector('.section-header');
+        const content = section?.querySelector('.section-content');
+        const chevron = header?.querySelector('.section-chevron');
+        
+        if (section && header && content && chevron) {
+            section.classList.add('collapsed');
+            content.classList.add('collapsed');
+            chevron.classList.add('collapsed');
+            console.log('Force collapsed section:', sectionId);
+        }
+    }
+
     function toggleDropdown() {
         isDropdownOpen = !isDropdownOpen;
         
@@ -132,6 +205,9 @@
             // Show branch comparison section again
             const branchComparisonSection = document.getElementById('branchComparisonSection');
             branchComparisonSection?.classList.remove('hidden');
+            
+            // Ensure branch comparison section is expanded
+            expandSection('branchComparisonSection');
         }
         
         vscode.postMessage({ type: 'getBranches' });
@@ -364,6 +440,9 @@
         const branchComparisonSection = document.getElementById('branchComparisonSection');
         branchComparisonSection?.classList.remove('hidden');
         
+        // Ensure the results section is expanded when starting a review
+        expandSection('resultsSection');
+        
         if (reviewStatusText) reviewStatusText.textContent = 'Starting code review...';
         
         // Clear previous results
@@ -391,6 +470,9 @@
         
         // Hide the review status spinner since this is from chat
         reviewStatus?.classList.add('hidden');
+        
+        // Ensure the results section is expanded when showing chat results
+        expandSection('resultsSection');
         
         console.log('UI prepared for chat review results - irrelevant sections hidden, chat mode enabled');
     }

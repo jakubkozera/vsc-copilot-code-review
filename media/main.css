@@ -37,6 +37,62 @@ body {
     opacity: 0.8;
 }
 
+/* Collapsible section styles */
+.section-header {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0;
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+    transition: background-color 0.2s ease;
+    border-radius: 2px;
+}
+
+.section-header:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.section-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.section-title svg {
+    flex-shrink: 0;
+    opacity: 0.8;
+}
+
+.section-chevron {
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
+.section-chevron.collapsed {
+    transform: rotate(-90deg);
+}
+
+.section-content {
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.section-content.collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin: 0;
+    padding: 0;
+}
+
+.section.collapsed .section-header {
+    margin-bottom: 0;
+}
+
 .branch-selector {
     display: flex;
     flex-direction: column;
