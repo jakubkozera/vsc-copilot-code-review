@@ -39,23 +39,26 @@ body {
 .branch-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
 }
 
 .branch-button {
-    flex: 1;
-    min-width: 120px;
-    padding: 6px 8px;
+    padding: 4px 8px;
     border: 1px solid var(--vscode-input-border);
     border-radius: 2px;
     background-color: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     transition: all 0.2s ease;
+    text-align: center;
+    white-space: nowrap;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .branch-button:hover {
@@ -67,10 +70,9 @@ body {
     border-color: var(--vscode-focusBorder);
 }
 
-.branch-button svg {
-    width: 12px;
-    height: 12px;
+.branch-button .icon-tabler-cloud {
     opacity: 0.7;
+    flex-shrink: 0;
 }
 
 .branch-select {
@@ -90,9 +92,9 @@ body {
 }
 
 .arrow {
-    font-size: 16px;
+    font-size: 14px;
     color: var(--vscode-foreground);
-    min-width: 20px;
+    min-width: 16px;
     text-align: center;
     display: flex;
     align-items: center;
@@ -100,8 +102,8 @@ body {
 }
 
 .arrow svg {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
 }
 
 .review-buttons {

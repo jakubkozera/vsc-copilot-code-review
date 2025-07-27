@@ -126,6 +126,31 @@
         vscode.postMessage({ type: 'getBranches' });
     }
 
+    function formatBranchDisplay(branchName) {
+        if (!branchName) return branchName;
+        
+        // Check if branch starts with remote/origin prefixes
+        const remoteOriginPrefixes = ['remote/origin/', 'remotes/origin/', 'origin/'];
+        let isRemote = false;
+        let displayName = branchName;
+        
+        for (const prefix of remoteOriginPrefixes) {
+            if (branchName.startsWith(prefix)) {
+                isRemote = true;
+                displayName = branchName.substring(prefix.length);
+                break;
+            }
+        }
+        
+        if (isRemote) {
+            // Return HTML with cloud icon for remote branches
+            return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-cloud" style="margin-right: 4px; vertical-align: middle;"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878" /></svg><span style="vertical-align: middle;">${displayName}</span>`;
+        }
+        
+        // Return plain text for local branches
+        return `<span>${displayName}</span>`;
+    }
+
     function handleMessage(message) {
         switch (message.type) {
             case 'branchesLoaded':
@@ -134,14 +159,14 @@
             case 'baseBranchSelected':
                 selectedBaseBranch = message.branch;
                 if (baseBranchText) {
-                    baseBranchText.textContent = message.branch;
+                    baseBranchText.innerHTML = formatBranchDisplay(message.branch);
                 }
                 updateReviewButtons();
                 break;
             case 'targetBranchSelected':
                 selectedTargetBranch = message.branch;
                 if (targetBranchText) {
-                    targetBranchText.textContent = message.branch;
+                    targetBranchText.innerHTML = formatBranchDisplay(message.branch);
                 }
                 updateReviewButtons();
                 break;
@@ -176,13 +201,13 @@
         if (currentBranch) {
             selectedTargetBranch = currentBranch;
             if (targetBranchText) {
-                targetBranchText.textContent = currentBranch;
+                targetBranchText.innerHTML = formatBranchDisplay(currentBranch);
             }
         }
         if (defaultBase) {
             selectedBaseBranch = defaultBase;
             if (baseBranchText) {
-                baseBranchText.textContent = defaultBase;
+                baseBranchText.innerHTML = formatBranchDisplay(defaultBase);
             }
         }
 
