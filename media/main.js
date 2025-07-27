@@ -7,8 +7,11 @@
     const baseBranchSelect = document.getElementById('baseBranch');
     const targetBranchSelect = document.getElementById('targetBranch');
     const reviewButtons = document.getElementById('reviewButtons');
-    const reviewCommittedBtn = document.getElementById('reviewCommitted');
-    const reviewAllBtn = document.getElementById('reviewAll');
+    const mainButton = document.getElementById('mainButton');
+    const mainArea = document.getElementById('mainArea');
+    const chevronArea = document.getElementById('chevronArea');
+    const dropdownMenu = document.getElementById('dropdownMenu');
+    const dropdownArrow = document.getElementById('dropdownArrow');
     const previewSection = document.getElementById('previewSection');
     const previewFiles = document.getElementById('previewFiles');
     const statusSection = document.getElementById('statusSection');
@@ -20,6 +23,7 @@
 
     let currentBranches = [];
     let isReviewing = false;
+    let isDropdownOpen = false;
 
     // Initialize
     window.addEventListener('load', () => {
@@ -32,24 +36,78 @@
         baseBranchSelect?.addEventListener('change', updateReviewButtons);
         targetBranchSelect?.addEventListener('change', updateReviewButtons);
 
-        // Review buttons
-        reviewCommittedBtn?.addEventListener('click', () => {
-            if (!isReviewing) {
-                startReview('committed');
+        // Dropdown functionality
+        if (mainArea) {
+            mainArea.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (!isReviewing && !mainButton?.classList.contains('disabled')) {
+                    startReview('committed');
+                }
+            });
+        }
+
+        if (chevronArea) {
+            chevronArea.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (!mainButton?.classList.contains('disabled')) {
+                    toggleDropdown();
+                }
+            });
+        }
+
+        // Dropdown options
+        const dropdownOptions = document.querySelectorAll('.dropdown-option');
+        dropdownOptions.forEach(option => {
+            option.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = option.getAttribute('data-action');
+                if (action && !isReviewing && !mainButton?.classList.contains('disabled')) {
+                    startReview(action);
+                }
+                closeDropdown();
+            });
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', () => {
+            if (isDropdownOpen) {
+                closeDropdown();
             }
         });
 
-        reviewAllBtn?.addEventListener('click', () => {
-            if (!isReviewing) {
-                startReview('all');
-            }
-        });
+        // Prevent dropdown from closing when clicking inside it
+        if (dropdownMenu) {
+            dropdownMenu.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
 
         // Listen for messages from the extension
         window.addEventListener('message', event => {
             const message = event.data;
             handleMessage(message);
         });
+    }
+
+    function toggleDropdown() {
+        isDropdownOpen = !isDropdownOpen;
+        
+        if (isDropdownOpen) {
+            dropdownMenu?.classList.add('show');
+            mainButton?.classList.add('expanded');
+            dropdownArrow?.classList.add('expanded');
+        } else {
+            dropdownMenu?.classList.remove('show');
+            mainButton?.classList.remove('expanded');
+            dropdownArrow?.classList.remove('expanded');
+        }
+    }
+
+    function closeDropdown() {
+        isDropdownOpen = false;
+        dropdownMenu?.classList.remove('show');
+        mainButton?.classList.remove('expanded');
+        dropdownArrow?.classList.remove('expanded');
     }
 
     function loadBranches() {
@@ -200,8 +258,7 @@
         }
 
         isReviewing = true;
-        if (reviewCommittedBtn) reviewCommittedBtn.disabled = true;
-        if (reviewAllBtn) reviewAllBtn.disabled = true;
+        if (mainButton) mainButton.classList.add('disabled');
 
         vscode.postMessage({
             type: 'reviewChanges',
@@ -230,8 +287,7 @@
 
     function handleReviewCompleted(results, errors) {
         isReviewing = false;
-        if (reviewCommittedBtn) reviewCommittedBtn.disabled = false;
-        if (reviewAllBtn) reviewAllBtn.disabled = false;
+        if (mainButton) mainButton.classList.remove('disabled');
         
         if (progressFill) progressFill.style.width = '100%';
         if (statusMessage) statusMessage.textContent = 'Review completed!';
@@ -244,8 +300,7 @@
 
     function handleReviewError(message) {
         isReviewing = false;
-        if (reviewCommittedBtn) reviewCommittedBtn.disabled = false;
-        if (reviewAllBtn) reviewAllBtn.disabled = false;
+        if (mainButton) mainButton.classList.remove('disabled');
         
         progressBar?.classList.add('hidden');
         if (statusMessage) statusMessage.innerHTML = `<div class="error-message">Error: ${message}</div>`;

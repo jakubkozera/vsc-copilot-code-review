@@ -384,14 +384,26 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             </div>
             
             <div class="review-buttons hidden" id="reviewButtons">
-                <button id="reviewCommitted" class="button primary">
-                    <span class="codicon codicon-git-commit"></span>
-                    Review Committed Changes
-                </button>
-                <button id="reviewAll" class="button secondary">
-                    <span class="codicon codicon-git-branch"></span>
-                    Review Committed and Pending Changes
-                </button>
+                <div class="expandable-container">
+                    <button class="main-button" id="mainButton">
+                        <div class="button-main-area" id="mainArea">
+                            <span class="codicon codicon-git-commit"></span>
+                            <span>Review Committed Changes</span>
+                        </div>
+                        <div class="button-chevron-area" id="chevronArea">
+                            <svg class="dropdown-arrow" id="dropdownArrow" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                                <path d="M6 9l6 6l6 -6" />
+                            </svg>
+                        </div>
+                    </button>
+                    <div class="dropdown-menu" id="dropdownMenu">
+                        <div class="dropdown-option" data-action="all">
+                            <span class="codicon codicon-git-branch"></span>
+                            <span>Review Committed and Pending Changes</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 

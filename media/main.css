@@ -72,6 +72,127 @@ body {
     margin-top: 12px;
 }
 
+.expandable-container {
+    position: relative;
+    display: inline-block;
+}
+
+.main-button {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    padding: 0;
+    border-radius: 2px;
+    font-size: 13px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    transition: background-color 0.2s ease;
+    overflow: hidden;
+}
+
+.main-button:disabled,
+.main-button.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.main-button.disabled .button-main-area,
+.main-button.disabled .button-chevron-area {
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.main-button:hover:not(:disabled) {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.main-button.expanded {
+    border-radius: 2px 2px 0 0;
+}
+
+.button-main-area {
+    flex: 1;
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background-color 0.2s ease;
+}
+
+.button-main-area:hover:not(.disabled) {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.button-chevron-area {
+    padding: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: background-color 0.2s ease;
+    border-left: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.button-chevron-area:hover:not(.disabled) {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.dropdown-arrow {
+    transition: transform 0.2s ease;
+    width: 16px;
+    height: 16px;
+}
+
+.dropdown-arrow.expanded {
+    transform: rotate(180deg);
+}
+
+.dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background-color: var(--vscode-dropdown-background);
+    border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+    border-top: none;
+    border-radius: 0 0 2px 2px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-5px);
+    transition: all 0.2s ease;
+    z-index: 1000;
+}
+
+.dropdown-menu.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.dropdown-option {
+    padding: 8px 12px;
+    color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    border-bottom: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+    transition: background-color 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.dropdown-option:last-child {
+    border-bottom: none;
+}
+
+.dropdown-option:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
 .button {
     display: flex;
     align-items: center;
