@@ -51,7 +51,7 @@ describe('parseAsJsonArray', () => {
 
         // Verify the fallback warning was logged
         expect(consoleWarnSpy).toHaveBeenCalledWith(
-            'LGTM: Failed to parse JSON, falling back to jsonc-parser for more tolerant parsing'
+            'codeReview: Failed to parse JSON, falling back to jsonc-parser for more tolerant parsing'
         );
 
         // Verify the correct result despite JSON issues

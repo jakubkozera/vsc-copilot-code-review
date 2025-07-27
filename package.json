@@ -1,12 +1,12 @@
 {
-  "name": "lgtm",
-  "displayName": "LGTM - AI Code Review",
+  "name": "codeReview",
+  "displayName": "codeReview - AI Code Review",
   "description": "Review source code changes in Git using GitHub Copilot Chat",
   "publisher": "cpulvermacher",
   "version": "0.21.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cpulvermacher/lgtm.git"
+    "url": "https://github.com/cpulvermacher/codeReview.git"
   },
   "engines": {
     "vscode": "^1.99.1"
@@ -32,9 +32,41 @@
   "contributes": {
     "commands": [
       {
-        "command": "lgtm.selectChatModel",
+        "command": "codeReview.selectChatModel",
         "title": "Select Chat Model",
-        "category": "LGTM"
+        "category": "codeReview"
+      },
+      {
+        "command": "codeReview.openCodeReviewPanel",
+        "title": "Open Code Review Panel",
+        "category": "codeReview"
+      },
+      {
+        "command": "codeReview.refreshCodeReview",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codeReview.reviewCommittedChanges",
+        "title": "Review Committed Changes",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "codeReview.reviewAllChanges",
+        "title": "Review All Changes",
+        "icon": "$(git-branch)"
+      },
+      {
+        "command": "codeReview.nextComment",
+        "title": "Next Comment",
+        "category": "codeReview",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "codeReview.previousComment",
+        "title": "Previous Comment", 
+        "category": "codeReview",
+        "icon": "$(arrow-left)"
       }
     ],
     "chatParticipants": [
@@ -121,23 +153,101 @@
         }
       }
     ],
+    "views": {
+      "scm": [
+        {
+          "id": "codeReview.codeReview",
+          "name": "Copilot Code Review",
+          "when": "scmProvider == git",
+          "type": "webview"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": []
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "codeReview.refreshCodeReview",
+          "when": "view == codeReview.codeReview",
+          "group": "navigation"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "codeReview.previousComment",
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@1",
+          "icon": "$(arrow-left)"
+        },
+        {
+          "command": "codeReview.nextComment", 
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@2", 
+          "icon": "$(arrow-right)"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "codeReview.previousComment",
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@1",
+          "icon": "$(arrow-left)"
+        },
+        {
+          "command": "codeReview.nextComment", 
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@2",
+          "icon": "$(arrow-right)"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "codeReview.previousComment",
+          "when": "comment == codeReview-comment",
+          "group": "navigation@1",
+          "icon": "$(arrow-left)"
+        },
+        {
+          "command": "codeReview.nextComment", 
+          "when": "comment == codeReview-comment",
+          "group": "navigation@2",
+          "icon": "$(arrow-right)"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "codeReview.nextComment",
+        "key": "ctrl+shift+n",
+        "mac": "cmd+shift+n",
+        "when": "commentController == codeReview-comments"
+      },
+      {
+        "command": "codeReview.previousComment", 
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b",
+        "when": "commentController == codeReview-comments"
+      }
+    ],
     "configuration": {
-      "title": "LGTM",
+      "title": "codeReview",
       "properties": {
-        "lgtm.minSeverity": {
+        "codeReview.minSeverity": {
           "type": "number",
           "default": 2,
           "description": "Suppress comments with severity lower than the configured value. (1 to show all issues)",
           "minimum": 1,
           "maximum": 5
         },
-        "lgtm.customPrompt": {
+        "codeReview.customPrompt": {
           "type": "string",
           "default": "",
           "description": "Add custom text to the review prompt. For example, \"- In the final JSON output, use Spanish for the  `comment` field.\"",
           "editPresentation": "multilineText"
         },
-        "lgtm.exclude": {
+        "codeReview.exclude": {
           "type": "array",
           "default": [
             "package-lock.json",
@@ -150,22 +260,22 @@
           },
           "description": "Exclude paths from review using glob patterns. Binary files are not reviewed and do not need to be excluded."
         },
-        "lgtm.enableDebugOutput": {
+        "codeReview.enableDebugOutput": {
           "type": "boolean",
           "default": false,
-          "description": "Log debug output to Output Panel > LGTM."
+          "description": "Log debug output to Output Panel > codeReview."
         },
-        "lgtm.chatModel": {
+        "codeReview.chatModel": {
           "type": "string",
           "default": "gpt-4o",
-          "markdownDescription": "Chat model ID to use for generating review comments. Note that non-default models may not be available, may require changes to the [Copilot settings](https://github.com/settings/copilot), or have stricter rate limits. (EXPERIMENTAL). Use the 'LGTM: Select Chat Model' command to choose from available models."
+          "markdownDescription": "Chat model ID to use for generating review comments. Note that non-default models may not be available, may require changes to the [Copilot settings](https://github.com/settings/copilot), or have stricter rate limits. (EXPERIMENTAL). Use the 'codeReview: Select Chat Model' command to choose from available models."
         },
-        "lgtm.mergeFileReviewRequests": {
+        "codeReview.mergeFileReviewRequests": {
           "type": "boolean",
           "default": true,
           "description": "Review changes for multiple files in one request. This improves the model's understanding of the context of individual changes and speeds up reviews. Disabling this will lose these advantages, but can be useful for a very detailed line-by-line review."
         },
-        "lgtm.maxInputTokensFraction": {
+        "codeReview.maxInputTokensFraction": {
           "type": "number",
           "default": 0.95,
           "description": "Fraction of the chat model's input token limit to use for requests. Lower values may increase quality of e.g. function level comments, but reduce the available context; higher values may improve the models understanding on how different changes relate to each other. The maximum allowed value is 0.95 to avoid token limit errors.",

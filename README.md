@@ -1,11 +1,11 @@
-# LGTM - AI Code Review
+# codeReview - AI Code Review
 
-[![Latest Release](https://flat.badgen.net/github/release/cpulvermacher/lgtm)](https://github.com/cpulvermacher/lgtm/releases)
-![Installs](https://vsmarketplacebadges.dev/installs-short/cpulvermacher.lgtm.svg)
-[![Status](https://flat.badgen.net/github/checks/cpulvermacher/lgtm)](https://github.com/cpulvermacher/lgtm/actions/workflows/node.js.yml)
-[![License](https://flat.badgen.net/github/license/cpulvermacher/lgtm)](./LICENSE)
+[![Latest Release](https://flat.badgen.net/github/release/cpulvermacher/codeReview)](https://github.com/cpulvermacher/codeReview/releases)
+![Installs](https://vsmarketplacebadges.dev/installs-short/cpulvermacher.codeReview.svg)
+[![Status](https://flat.badgen.net/github/checks/cpulvermacher/codeReview)](https://github.com/cpulvermacher/codeReview/actions/workflows/node.js.yml)
+[![License](https://flat.badgen.net/github/license/cpulvermacher/codeReview)](./LICENSE)
 
-LGTM is a Visual Studio Code extension that uses GitHub Copilot Chat to review source code changes in Git. It can help you catch bugs, areas for improvement, and other issues before merging.
+codeReview is a Visual Studio Code extension that uses GitHub Copilot Chat to review source code changes in Git. It can help you catch bugs, areas for improvement, and other issues before merging.
 
 
 ## Getting Started
@@ -23,7 +23,7 @@ Switch to the Chat sidebar and ensure you are in `Ask` mode.
 
 **View Results**
 
-LGTM will respond with review comments grouped by file and sorted by severity.
+codeReview will respond with review comments grouped by file and sorted by severity.
 
 
 ![Demo](./images/demo.gif)
@@ -32,14 +32,14 @@ LGTM will respond with review comments grouped by file and sorted by severity.
 ## Features
 
 - **Only Copilot Required**: Uses Copilot Chat for reviewing changes.
-- **Model Selection**: Choose any language model available to VS Code via the **LGTM: Select Chat Model** command available in the Command Palette (press `Cmd+Shift+P` or `Ctrl+Shift+P`).
-- **Custom Instructions**: Add custom instructions via the `Lgtm: Custom Prompt` setting (e.g., change the language of review comments by adding `- In the final JSON output, use Spanish for the  `comment` field.`).
+- **Model Selection**: Choose any language model available to VS Code via the **codeReview: Select Chat Model** command available in the Command Palette (press `Cmd+Shift+P` or `Ctrl+Shift+P`).
+- **Custom Instructions**: Add custom instructions via the `codeReview: Custom Prompt` setting (e.g., change the language of review comments by adding `- In the final JSON output, use Spanish for the  `comment` field.`).
 - **Agent Support**: Adds tools to enable automatic reviews in agent mode:
   - `#review`: Reviews changes between two git references (branches, tags, or commits)
   - `#reviewStaged`: Reviews only staged changes in your working directory
   - `#reviewUnstaged`: Reviews only unstaged changes in your working directory
   - Example usage: `After your changes, run all tests and run #reviewUnstaged to check your work.`
-- **Chat Integration**: Review content remains in chat history for follow-up questions by omitting `@lgtm`.
+- **Chat Integration**: Review content remains in chat history for follow-up questions by omitting `@codeReview`.
 
 
 
@@ -57,4 +57,4 @@ Source code changes and commit messages selected for review are sent to the chat
 
 ## Contributing
 
-Contributions are welcome! If you have ideas, bug reports, or want to help improve LGTM, please open an issue or submit a pull request on [GitHub](https://github.com/cpulvermacher/lgtm).
+Contributions are welcome! If you have ideas, bug reports, or want to help improve codeReview, please open an issue or submit a pull request on [GitHub](https://github.com/cpulvermacher/codeReview).

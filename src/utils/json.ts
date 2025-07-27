@@ -14,7 +14,7 @@ export function parseAsJsonArray(response: string): unknown[] {
         rawComments = JSON.parse(jsonString);
     } catch {
         console.warn(
-            'LGTM: Failed to parse JSON, falling back to jsonc-parser for more tolerant parsing'
+            'codeReview: Failed to parse JSON, falling back to jsonc-parser for more tolerant parsing'
         );
         // Fallback to jsonc-parser for more tolerant parsing
         rawComments = jsoncParser.parse(jsonString);

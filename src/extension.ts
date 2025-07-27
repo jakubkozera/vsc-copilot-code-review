@@ -6,11 +6,13 @@ import { UncommittedRef } from '@/types/Ref';
 import { ReviewRequest, ReviewScope } from '@/types/ReviewRequest';
 import { ReviewResult } from '@/types/ReviewResult';
 import { parseArguments } from '@/utils/parseArguments';
+import { CodeReviewPanel } from '@/vscode/CodeReviewPanel';
 import { getConfig, toUri } from '@/vscode/config';
 import { ReviewTool } from '@/vscode/ReviewTool';
 import { pickCommit, pickRef, pickRefs } from '@/vscode/ui';
 
 let chatParticipant: vscode.ChatParticipant;
+let codeReviewPanel: CodeReviewPanel;
 
 // called the first time a command is executed
 export function activate(context: vscode.ExtensionContext) {
@@ -20,10 +22,38 @@ export function activate(context: vscode.ExtensionContext) {
         'images/chat_icon.png'
     );
 
+    // Register the Code Review Panel
+    codeReviewPanel = new CodeReviewPanel(context.extensionUri);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(CodeReviewPanel.viewType, codeReviewPanel)
+    );
+    context.subscriptions.push(codeReviewPanel);
+
     context.subscriptions.push(
         vscode.commands.registerCommand(
-            'lgtm.selectChatModel',
+            'codeReview.selectChatModel',
             handleSelectChatModel
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.refreshCodeReview',
+            () => codeReviewPanel.refresh()
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.nextComment',
+            () => codeReviewPanel.navigateToNext()
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.previousComment',
+            () => codeReviewPanel.navigateToPrevious()
         )
     );
 
@@ -60,9 +90,9 @@ async function handleChat(
     ) {
         stream.markdown(
             'Please use one of the following commands:\n' +
-                ' - `@lgtm /review` to review changes between two branches, commits, or tags. You can specify git refs using e.g. `/review develop main`, or omit the second or both arguments to select refs interactively.\n' +
-                ' - `@lgtm /branch` to review changes between two branches\n' +
-                ' - `@lgtm /commit` to review changes in a single commit'
+                ' - `@codeReview /review` to review changes between two branches, commits, or tags. You can specify git refs using e.g. `/review develop main`, or omit the second or both arguments to select refs interactively.\n' +
+                ' - `@codeReview /branch` to review changes between two branches\n' +
+                ' - `@codeReview /commit` to review changes in a single commit'
         );
         return;
     }
@@ -296,18 +326,18 @@ async function handleSelectChatModel() {
     });
     const selectedQuickPickItem = await vscode.window.showQuickPick(
         quickPickItems,
-        { placeHolder: 'Select a chat model for LGTM reviews' }
+        { placeHolder: 'Select a chat model for codeReview reviews' }
     );
     if (selectedQuickPickItem) {
         await vscode.workspace
-            .getConfiguration('lgtm')
+            .getConfiguration('codeReview')
             .update(
                 'chatModel',
                 selectedQuickPickItem.id,
                 vscode.ConfigurationTarget.Global
             );
         vscode.window.showInformationMessage(
-            `LGTM chat model set to: ${selectedQuickPickItem.name}`
+            `codeReview chat model set to: ${selectedQuickPickItem.name}`
         );
     }
 }

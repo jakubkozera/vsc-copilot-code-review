@@ -69,11 +69,11 @@ export class ReviewTool implements vscode.LanguageModelTool<ReviewInput> {
         let message: string;
 
         if (target === UncommittedRef.Staged) {
-            message = `LGTM: Reviewing staged changes...`;
+            message = `codeReview: Reviewing staged changes...`;
         } else if (target === UncommittedRef.Unstaged) {
-            message = `LGTM: Reviewing unstaged changes...`;
+            message = `codeReview: Reviewing unstaged changes...`;
         } else {
-            message = `LGTM: Reviewing changes on ${target} compared to ${base}...`;
+            message = `codeReview: Reviewing changes on ${target} compared to ${base}...`;
         }
 
         return {
