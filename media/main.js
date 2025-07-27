@@ -322,19 +322,28 @@
 
         let html = '';
         
-        results.forEach(file => {
+        results.forEach((file, fileIndex) => {
+            const fileName = getFileName(file.target);
+            
             html += `
                 <div class="result-file">
-                    <div class="result-file-header">${getFileIcon()} ${file.target}</div>
-                    <div class="result-comments">
+                    <div class="result-file-header" data-file-index="${fileIndex}">
+                        <div class="result-file-title">
+                            ${getFileIcon()} ${fileName}
+                        </div>
+                        <svg class="result-file-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                            <path d="M6 9l6 6l6 -6" />
+                        </svg>
+                    </div>
+                    <div class="result-comments" id="comments-${fileIndex}">
             `;
             
             file.comments.forEach(comment => {
                 html += `
-                    <div class="result-comment" data-file-path="${escapeHtml(file.target)}" data-line="${comment.line}" data-comment="${escapeHtml(comment.comment)}">
+                    <div class="result-comment severity-${comment.severity}" data-file-path="${escapeHtml(file.target)}" data-line="${comment.line}" data-comment="${escapeHtml(comment.comment)}">
                         <div class="comment-line">Line ${comment.line}</div>
                         <div class="comment-text">${escapeHtml(comment.comment)}</div>
-                        <div class="comment-severity severity-${comment.severity}">Severity: ${comment.severity}/5</div>
                     </div>
                 `;
             });
@@ -356,6 +365,28 @@
 
         if (reviewResults) {
             reviewResults.innerHTML = html;
+            
+            // Add click event listeners for collapsible headers
+            const fileHeaders = reviewResults.querySelectorAll('.result-file-header[data-file-index]');
+            fileHeaders.forEach(header => {
+                header.addEventListener('click', () => {
+                    const fileIndex = header.getAttribute('data-file-index');
+                    const commentsSection = document.getElementById(`comments-${fileIndex}`);
+                    const chevron = header.querySelector('.result-file-chevron');
+                    
+                    if (commentsSection && chevron) {
+                        const isExpanded = commentsSection.classList.contains('expanded');
+                        
+                        if (isExpanded) {
+                            commentsSection.classList.remove('expanded');
+                            chevron.classList.remove('expanded');
+                        } else {
+                            commentsSection.classList.add('expanded');
+                            chevron.classList.add('expanded');
+                        }
+                    }
+                });
+            });
             
             // Add click event listeners to comment elements
             const commentElements = reviewResults.querySelectorAll('.result-comment[data-file-path]');

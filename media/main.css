@@ -63,6 +63,14 @@ body {
     color: var(--vscode-foreground);
     min-width: 20px;
     text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.arrow svg {
+    width: 20px;
+    height: 20px;
 }
 
 .review-buttons {
@@ -118,6 +126,7 @@ body {
     cursor: pointer;
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
     transition: background-color 0.2s ease;
 }
@@ -182,6 +191,7 @@ body {
     transition: background-color 0.2s ease;
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
 }
 
@@ -309,6 +319,7 @@ body {
     border: 1px solid var(--vscode-panel-border);
     border-radius: 4px;
     overflow: hidden;
+    margin-bottom: 8px;
 }
 
 .result-file-header {
@@ -318,11 +329,40 @@ body {
     font-weight: 600;
     font-size: 13px;
     font-family: var(--vscode-editor-font-family);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: background-color 0.2s ease;
+}
+
+.result-file-header:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.result-file-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.result-file-chevron {
+    transition: transform 0.2s ease;
+    width: 16px;
+    height: 16px;
+}
+
+.result-file-chevron.expanded {
+    transform: rotate(180deg);
 }
 
 .result-comments {
-    display: flex;
+    display: none;
     flex-direction: column;
+}
+
+.result-comments.expanded {
+    display: flex;
 }
 
 .result-comment {
@@ -330,6 +370,7 @@ body {
     border-bottom: 1px solid var(--vscode-panel-border);
     cursor: pointer;
     transition: background-color 0.2s;
+    border-left: 4px solid transparent;
 }
 
 .result-comment:last-child {
@@ -338,6 +379,20 @@ body {
 
 .result-comment:hover {
     background-color: var(--vscode-list-hoverBackground);
+}
+
+.result-comment.severity-1,
+.result-comment.severity-2 {
+    border-left-color: var(--vscode-notificationsInfoIcon-foreground, #007acc);
+}
+
+.result-comment.severity-3 {
+    border-left-color: var(--vscode-notificationsWarningIcon-foreground, #ffcc00);
+}
+
+.result-comment.severity-4,
+.result-comment.severity-5 {
+    border-left-color: var(--vscode-notificationsErrorIcon-foreground, #f85149);
 }
 
 .comment-line {
@@ -352,9 +407,7 @@ body {
 }
 
 .comment-severity {
-    font-size: 11px;
-    color: var(--vscode-descriptionForeground);
-    margin-top: 4px;
+    display: none;
 }
 
 .severity-1, .severity-2 {
