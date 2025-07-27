@@ -22,12 +22,15 @@
     const progressFill = document.getElementById('progressFill');
     const resultsSection = document.getElementById('resultsSection');
     const reviewResults = document.getElementById('reviewResults');
+    const reviewStatus = document.getElementById('reviewStatus');
+    const reviewStatusText = document.getElementById('reviewStatusText');
 
     let currentBranches = [];
     let selectedBaseBranch = '';
     let selectedTargetBranch = '';
     let isReviewing = false;
     let isDropdownOpen = false;
+    let currentResults = [];
 
     // Initialize
     window.addEventListener('load', () => {
@@ -150,6 +153,9 @@
                 break;
             case 'reviewProgress':
                 handleReviewProgress(message.message);
+                break;
+            case 'fileReviewCompleted':
+                handleFileReviewCompleted(message.fileResult);
                 break;
             case 'reviewCompleted':
                 handleReviewCompleted(message.results, message.errors);
@@ -277,48 +283,69 @@
     }
 
     function handleReviewStarted() {
+        isReviewing = true;
+        if (mainButton) mainButton.classList.add('disabled');
+        
         previewSection?.classList.add('hidden');
-        statusSection?.classList.remove('hidden');
-        resultsSection?.classList.add('hidden');
-        if (statusMessage) statusMessage.textContent = 'Starting code review...';
-        progressBar?.classList.remove('hidden');
-        if (progressFill) progressFill.style.width = '10%';
+        statusSection?.classList.add('hidden');
+        resultsSection?.classList.remove('hidden');
+        reviewStatus?.classList.remove('hidden');
+        
+        if (reviewStatusText) reviewStatusText.textContent = 'Starting code review...';
+        
+        // Clear previous results
+        currentResults = [];
+        if (reviewResults) reviewResults.innerHTML = '';
     }
 
     function handleReviewProgress(message) {
-        if (statusMessage) statusMessage.textContent = message;
-        // Simulate progress increase
-        const currentWidth = parseInt(progressFill?.style.width || '10') || 10;
-        const newWidth = Math.min(currentWidth + 20, 90);
-        if (progressFill) progressFill.style.width = newWidth + '%';
+        if (reviewStatusText) reviewStatusText.textContent = message;
+    }
+
+    function handleFileReviewCompleted(fileResult) {
+        if (!fileResult) return;
+        
+        // Add to current results
+        currentResults.push(fileResult);
+        
+        // Update status
+        if (reviewStatusText) {
+            reviewStatusText.textContent = `Reviewed ${currentResults.length} file(s)...`;
+        }
+        
+        // Append just this file result to UI
+        updateResultsUI([fileResult], null, false, true); // append mode
     }
 
     function handleReviewCompleted(results, errors) {
         isReviewing = false;
         if (mainButton) mainButton.classList.remove('disabled');
         
-        if (progressFill) progressFill.style.width = '100%';
-        if (statusMessage) statusMessage.textContent = 'Review completed!';
+        // Hide spinner
+        reviewStatus?.classList.add('hidden');
         
-        setTimeout(() => {
-            statusSection?.classList.add('hidden');
-            showResults(results, errors);
-        }, 1000);
+        // Show final results
+        if (results && results.length > 0) {
+            currentResults = results;
+        }
+        
+        updateResultsUI(currentResults, errors, true);
     }
 
     function handleReviewError(message) {
         isReviewing = false;
         if (mainButton) mainButton.classList.remove('disabled');
         
-        progressBar?.classList.add('hidden');
-        if (statusMessage) statusMessage.innerHTML = `<div class="error-message">Error: ${message}</div>`;
+        reviewStatus?.classList.add('hidden');
+        
+        if (reviewResults) {
+            reviewResults.innerHTML = `<div class="error-message">Error: ${message}</div>`;
+        }
     }
 
-    function showResults(results, errors) {
-        resultsSection?.classList.remove('hidden');
-        
+    function updateResultsUI(results, errors = null, isComplete = false, append = false) {
         if (!results || results.length === 0) {
-            if (reviewResults) {
+            if (isComplete && reviewResults) {
                 reviewResults.innerHTML = `
                     <div class="empty-state">
                         ✅ No issues found in the code review!
@@ -330,12 +357,16 @@
 
         let html = '';
         
+        // Calculate file index offset for append mode
+        const fileIndexOffset = append ? (reviewResults?.children.length || 0) : 0;
+        
         results.forEach((file, fileIndex) => {
+            const actualFileIndex = fileIndexOffset + fileIndex;
             const fileName = getFileName(file.target);
             
             html += `
                 <div class="result-file">
-                    <div class="result-file-header" data-file-index="${fileIndex}">
+                    <div class="result-file-header" data-file-index="${actualFileIndex}">
                         <div class="result-file-title">
                             ${getFileIcon()} ${fileName}
                         </div>
@@ -344,7 +375,7 @@
                             <path d="M6 9l6 6l6 -6" />
                         </svg>
                     </div>
-                    <div class="result-comments" id="comments-${fileIndex}">
+                    <div class="result-comments" id="comments-${actualFileIndex}">
             `;
             
             file.comments.forEach(comment => {
@@ -362,63 +393,85 @@
             `;
         });
 
-        if (errors && errors.length > 0) {
-            html += `
-                <div class="error-message">
-                    <strong>Errors occurred during review:</strong><br>
-                    ${errors.map(error => escapeHtml(error.message)).join('<br>')}
-                </div>
-            `;
-        }
+        // Error handling temporarily disabled to focus on progressive updates
+        // if (errors && Array.isArray(errors) && errors.length > 0 && isComplete) {
+        //     html += `
+        //         <div class="error-message">
+        //             <strong>Errors occurred during review:</strong><br>
+        //             ${errors.map(error => escapeHtml(error.message || error.toString())).join('<br>')}
+        //         </div>
+        //     `;
+        // }
 
         if (reviewResults) {
-            reviewResults.innerHTML = html;
+            if (append) {
+                // Append to existing content
+                reviewResults.insertAdjacentHTML('beforeend', html);
+            } else {
+                // Replace all content
+                reviewResults.innerHTML = html;
+            }
             
-            // Add click event listeners for collapsible headers
-            const fileHeaders = reviewResults.querySelectorAll('.result-file-header[data-file-index]');
-            fileHeaders.forEach(header => {
-                header.addEventListener('click', () => {
-                    const fileIndex = header.getAttribute('data-file-index');
-                    const commentsSection = document.getElementById(`comments-${fileIndex}`);
-                    const chevron = header.querySelector('.result-file-chevron');
-                    
-                    if (commentsSection && chevron) {
-                        const isExpanded = commentsSection.classList.contains('expanded');
-                        
-                        if (isExpanded) {
-                            commentsSection.classList.remove('expanded');
-                            chevron.classList.remove('expanded');
-                        } else {
-                            commentsSection.classList.add('expanded');
-                            chevron.classList.add('expanded');
-                        }
-                    }
-                });
-            });
-            
-            // Add click event listeners to comment elements
-            const commentElements = reviewResults.querySelectorAll('.result-comment[data-file-path]');
-            commentElements.forEach(element => {
-                element.addEventListener('click', () => {
-                    const filePath = element.getAttribute('data-file-path');
-                    const lineAttr = element.getAttribute('data-line');
-                    const comment = element.getAttribute('data-comment');
-                    
-                    console.log('Comment clicked:', { filePath, lineAttr, comment });
-                    
-                    if (filePath && lineAttr && comment) {
-                        const line = parseInt(lineAttr, 10);
-                        console.log('Sending openFile message:', { filePath, line, comment });
-                        vscode.postMessage({
-                            type: 'openFile',
-                            filePath: filePath,
-                            line: line,
-                            comment: comment
-                        });
-                    }
-                });
-            });
+            // Re-attach event listeners (only for new elements if appending)
+            if (append) {
+                attachResultEventListeners();
+            } else {
+                attachResultEventListeners();
+            }
         }
+    }
+
+    function attachResultEventListeners() {
+        if (!reviewResults) return;
+        
+        // Add click event listeners for collapsible headers
+        const fileHeaders = reviewResults.querySelectorAll('.result-file-header[data-file-index]');
+        fileHeaders.forEach(header => {
+            header.addEventListener('click', () => {
+                const fileIndex = header.getAttribute('data-file-index');
+                const commentsSection = document.getElementById(`comments-${fileIndex}`);
+                const chevron = header.querySelector('.result-file-chevron');
+                
+                if (commentsSection && chevron) {
+                    const isExpanded = commentsSection.classList.contains('expanded');
+                    
+                    if (isExpanded) {
+                        commentsSection.classList.remove('expanded');
+                        chevron.classList.remove('expanded');
+                    } else {
+                        commentsSection.classList.add('expanded');
+                        chevron.classList.add('expanded');
+                    }
+                }
+            });
+        });
+        
+        // Add click event listeners to comment elements
+        const commentElements = reviewResults.querySelectorAll('.result-comment[data-file-path]');
+        commentElements.forEach(element => {
+            element.addEventListener('click', () => {
+                const filePath = element.getAttribute('data-file-path');
+                const lineAttr = element.getAttribute('data-line');
+                const comment = element.getAttribute('data-comment');
+                
+                console.log('Comment clicked:', { filePath, lineAttr, comment });
+                
+                if (filePath && lineAttr && comment) {
+                    const line = parseInt(lineAttr, 10);
+                    console.log('Sending openFile message:', { filePath, line, comment });
+                    vscode.postMessage({
+                        type: 'openFile',
+                        filePath: filePath,
+                        line: line,
+                        comment: comment
+                    });
+                }
+            });
+        });
+    }
+
+    function showResults(results, errors) {
+        updateResultsUI(results, errors, true);
     }
 
     function showError(message) {

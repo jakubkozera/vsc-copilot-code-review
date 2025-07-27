@@ -1,5 +1,6 @@
 import { reviewDiff } from '@/review/review';
 import { Config } from '@/types/Config';
+import { FileComments } from '@/types/FileComments';
 import { ReviewRequest, ReviewScope } from '@/types/ReviewRequest';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -237,26 +238,52 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
 
             const result = await reviewDiff(this._config, reviewRequest, progress, new vscode.CancellationTokenSource().token);
             
-            // Filter comments by severity
+            // Filter comments by severity and send progressive updates
             const options = this._config.getOptions();
-            const filteredResults = result.fileComments.map(file => ({
-                ...file,
-                comments: file.comments.filter(comment => 
-                    comment.severity >= options.minSeverity && comment.line > 0
-                )
-            })).filter(file => file.comments.length > 0);
-
+            const filteredResults: FileComments[] = [];
+            
             // Store all comments for navigation
             this._allComments = [];
-            filteredResults.forEach(file => {
-                file.comments.forEach(comment => {
-                    this._allComments.push({
-                        filePath: file.target,
-                        line: comment.line,
-                        comment: comment.comment
+            
+            // Add a delay between file results to simulate progressive updates
+            for (let index = 0; index < result.fileComments.length; index++) {
+                const file = result.fileComments[index];
+                const filteredFile = {
+                    ...file,
+                    comments: file.comments.filter(comment => 
+                        comment.severity >= options.minSeverity && comment.line > 0
+                    )
+                };
+                
+                if (filteredFile.comments.length > 0) {
+                    filteredResults.push(filteredFile);
+                    
+                    // Add comments to navigation array
+                    filteredFile.comments.forEach(comment => {
+                        this._allComments.push({
+                            filePath: file.target,
+                            line: comment.line,
+                            comment: comment.comment
+                        });
                     });
+                    
+                    // Send individual file result with delay for visual effect
+                    this._view?.webview.postMessage({
+                        type: 'fileReviewCompleted',
+                        fileResult: filteredFile
+                    });
+                    
+                    // Add a small delay to make the progressive effect visible
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                }
+                
+                // Send progress update
+                this._view?.webview.postMessage({
+                    type: 'reviewProgress',
+                    message: `Processed ${index + 1}/${result.fileComments.length} files...`
                 });
-            });
+            }
+            
             this._currentCommentIndex = -1;
 
             // Hide status bar when no comments
@@ -507,6 +534,10 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
 
         <div class="section hidden" id="resultsSection">
             <h3>Review Results</h3>
+            <div id="reviewStatus" class="review-status hidden">
+                <div class="spinner"></div>
+                <span id="reviewStatusText">Starting review...</span>
+            </div>
             <div id="reviewResults" class="results">
                 <!-- Review results will be populated here -->
             </div>

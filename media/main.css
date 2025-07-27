@@ -143,6 +143,36 @@ body {
     pointer-events: none;
 }
 
+.spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--vscode-progressBar-background);
+    border-radius: 50%;
+    border-top-color: var(--vscode-progressBar-foreground);
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.review-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    font-size: 13px;
+    color: var(--vscode-foreground);
+    background-color: var(--vscode-editor-background);
+    border-radius: 4px;
+    margin-bottom: 12px;
+}
+
+.review-status.hidden {
+    display: none;
+}
+
 .main-button:hover:not(:disabled) {
     background-color: var(--vscode-button-hoverBackground);
 }
