@@ -4,8 +4,10 @@
     const vscode = acquireVsCodeApi();
 
     // DOM elements
-    const baseBranchSelect = document.getElementById('baseBranch');
-    const targetBranchSelect = document.getElementById('targetBranch');
+    const baseBranchButton = document.getElementById('baseBranch');
+    const targetBranchButton = document.getElementById('targetBranch');
+    const baseBranchText = document.getElementById('baseBranchText');
+    const targetBranchText = document.getElementById('targetBranchText');
     const reviewButtons = document.getElementById('reviewButtons');
     const mainButton = document.getElementById('mainButton');
     const mainArea = document.getElementById('mainArea');
@@ -22,6 +24,8 @@
     const reviewResults = document.getElementById('reviewResults');
 
     let currentBranches = [];
+    let selectedBaseBranch = '';
+    let selectedTargetBranch = '';
     let isReviewing = false;
     let isDropdownOpen = false;
 
@@ -33,8 +37,13 @@
 
     function setupEventListeners() {
         // Branch selection
-        baseBranchSelect?.addEventListener('change', updateReviewButtons);
-        targetBranchSelect?.addEventListener('change', updateReviewButtons);
+        baseBranchButton?.addEventListener('click', () => {
+            vscode.postMessage({ type: 'selectBaseBranch' });
+        });
+        
+        targetBranchButton?.addEventListener('click', () => {
+            vscode.postMessage({ type: 'selectTargetBranch' });
+        });
 
         // Dropdown functionality
         if (mainArea) {
@@ -119,6 +128,20 @@
             case 'branchesLoaded':
                 populateBranches(message.branches, message.currentBranch, message.defaultBase);
                 break;
+            case 'baseBranchSelected':
+                selectedBaseBranch = message.branch;
+                if (baseBranchText) {
+                    baseBranchText.textContent = message.branch;
+                }
+                updateReviewButtons();
+                break;
+            case 'targetBranchSelected':
+                selectedTargetBranch = message.branch;
+                if (targetBranchText) {
+                    targetBranchText.textContent = message.branch;
+                }
+                updateReviewButtons();
+                break;
             case 'filesListLoaded':
                 handleFilesListLoaded(message.files, message.baseBranch, message.targetBranch);
                 break;
@@ -143,41 +166,26 @@
     function populateBranches(branches, currentBranch, defaultBase) {
         currentBranches = branches;
 
-        // Clear existing options
-        if (baseBranchSelect) {
-            baseBranchSelect.innerHTML = '<option value="">Select base branch...</option>';
-        }
-        if (targetBranchSelect) {
-            targetBranchSelect.innerHTML = '<option value="">Select target branch...</option>';
-        }
-
-        // Populate branches
-        branches.forEach(branch => {
-            const baseOption = document.createElement('option');
-            baseOption.value = branch;
-            baseOption.textContent = branch;
-            baseBranchSelect?.appendChild(baseOption);
-
-            const targetOption = document.createElement('option');
-            targetOption.value = branch;
-            targetOption.textContent = branch;
-            targetBranchSelect?.appendChild(targetOption);
-        });
-
         // Set defaults
-        if (currentBranch && targetBranchSelect) {
-            targetBranchSelect.value = currentBranch;
+        if (currentBranch) {
+            selectedTargetBranch = currentBranch;
+            if (targetBranchText) {
+                targetBranchText.textContent = currentBranch;
+            }
         }
-        if (defaultBase && baseBranchSelect) {
-            baseBranchSelect.value = defaultBase;
+        if (defaultBase) {
+            selectedBaseBranch = defaultBase;
+            if (baseBranchText) {
+                baseBranchText.textContent = defaultBase;
+            }
         }
 
         updateReviewButtons();
     }
 
     function updateReviewButtons() {
-        const baseBranch = baseBranchSelect?.value || '';
-        const targetBranch = targetBranchSelect?.value || '';
+        const baseBranch = selectedBaseBranch;
+        const targetBranch = selectedTargetBranch;
         
         if (baseBranch && targetBranch && baseBranch !== targetBranch) {
             reviewButtons?.classList.remove('hidden');
@@ -249,8 +257,8 @@
     }
 
     function startReview(reviewType) {
-        const baseBranch = baseBranchSelect?.value || '';
-        const targetBranch = targetBranchSelect?.value || '';
+        const baseBranch = selectedBaseBranch;
+        const targetBranch = selectedTargetBranch;
 
         if (!baseBranch || !targetBranch) {
             showError('Please select both base and target branches');

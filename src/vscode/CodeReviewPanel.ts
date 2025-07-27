@@ -7,6 +7,8 @@ import { getConfig } from './config';
 
 type WebviewMessage = 
     | { type: 'getBranches' }
+    | { type: 'selectBaseBranch' }
+    | { type: 'selectTargetBranch' }
     | { type: 'getFilesList'; targetBranch: string; baseBranch: string; reviewType: 'committed' | 'all' }
     | { type: 'reviewChanges'; targetBranch: string; baseBranch: string; reviewType: 'committed' | 'all' }
     | { type: 'openFile'; filePath: string; line: number; comment: string }
@@ -50,6 +52,12 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             switch (data.type) {
                 case 'getBranches':
                     await this._getBranches();
+                    break;
+                case 'selectBaseBranch':
+                    await this._selectBaseBranch();
+                    break;
+                case 'selectTargetBranch':
+                    await this._selectTargetBranch();
                     break;
                 case 'getFilesList':
                     await this._getFilesList(data.targetBranch, data.baseBranch, data.reviewType);
@@ -102,6 +110,64 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             this._view?.webview.postMessage({
                 type: 'error',
                 message: 'Failed to load branches'
+            });
+        }
+    }
+
+    private async _selectBaseBranch() {
+        if (!this._config) {
+            this._config = await getConfig();
+        }
+
+        try {
+            const branchList = await this._config.git.getBranchList(undefined, 50);
+            const branches = branchList.map(b => b.ref).filter(ref => typeof ref === 'string');
+            
+            const selectedBranch = await vscode.window.showQuickPick(branches, {
+                placeHolder: 'Select base branch...',
+                title: 'Base Branch Selection'
+            });
+
+            if (selectedBranch) {
+                this._view?.webview.postMessage({
+                    type: 'baseBranchSelected',
+                    branch: selectedBranch
+                });
+            }
+        } catch (error) {
+            console.error('Error selecting base branch:', error);
+            this._view?.webview.postMessage({
+                type: 'error',
+                message: 'Failed to select base branch'
+            });
+        }
+    }
+
+    private async _selectTargetBranch() {
+        if (!this._config) {
+            this._config = await getConfig();
+        }
+
+        try {
+            const branchList = await this._config.git.getBranchList(undefined, 50);
+            const branches = branchList.map(b => b.ref).filter(ref => typeof ref === 'string');
+            
+            const selectedBranch = await vscode.window.showQuickPick(branches, {
+                placeHolder: 'Select target branch...',
+                title: 'Target Branch Selection'
+            });
+
+            if (selectedBranch) {
+                this._view?.webview.postMessage({
+                    type: 'targetBranchSelected',
+                    branch: selectedBranch
+                });
+            }
+        } catch (error) {
+            console.error('Error selecting target branch:', error);
+            this._view?.webview.postMessage({
+                type: 'error',
+                message: 'Failed to select target branch'
             });
         }
     }
@@ -373,9 +439,13 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             <h3>Branch Comparison</h3>
             <div class="branch-selector">
                 <div class="branch-row">
-                    <select id="baseBranch" class="branch-select">
-                        <option value="">Select base branch...</option>
-                    </select>
+                    <button id="baseBranch" class="branch-button">
+                        <span id="baseBranchText">Select base branch...</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                            <path d="M6 9l6 6l6 -6" />
+                        </svg>
+                    </button>
                     <span class="arrow">
                         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-arrow-left">
                             <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
@@ -384,9 +454,13 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                             <path d="M5 12l6 -6" />
                         </svg>
                     </span>
-                    <select id="targetBranch" class="branch-select">
-                        <option value="">Select target branch...</option>
-                    </select>
+                    <button id="targetBranch" class="branch-button">
+                        <span id="targetBranchText">Select target branch...</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                            <path d="M6 9l6 6l6 -6" />
+                        </svg>
+                    </button>
                 </div>
             </div>
             

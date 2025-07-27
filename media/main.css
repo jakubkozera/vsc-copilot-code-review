@@ -42,6 +42,37 @@ body {
     gap: 12px;
 }
 
+.branch-button {
+    flex: 1;
+    min-width: 120px;
+    padding: 6px 8px;
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 2px;
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.2s ease;
+}
+
+.branch-button:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.branch-button:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    border-color: var(--vscode-focusBorder);
+}
+
+.branch-button svg {
+    width: 12px;
+    height: 12px;
+    opacity: 0.7;
+}
+
 .branch-select {
     flex: 1;
     min-width: 120px;
@@ -408,18 +439,6 @@ body {
 
 .comment-severity {
     display: none;
-}
-
-.severity-1, .severity-2 {
-    color: var(--vscode-notificationsInfoIcon-foreground);
-}
-
-.severity-3 {
-    color: var(--vscode-notificationsWarningIcon-foreground);
-}
-
-.severity-4, .severity-5 {
-    color: var(--vscode-notificationsErrorIcon-foreground);
 }
 
 .error-message {
