@@ -28,6 +28,14 @@ body {
     font-size: 14px;
     font-weight: 600;
     color: var(--vscode-foreground);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.section h3 svg {
+    flex-shrink: 0;
+    opacity: 0.8;
 }
 
 .branch-selector {
