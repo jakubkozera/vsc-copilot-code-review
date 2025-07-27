@@ -31,6 +31,7 @@
     let isReviewing = false;
     let isDropdownOpen = false;
     let currentResults = [];
+    let isChatReviewMode = false; // Flag to indicate we're displaying chat review results
 
     // Initialize
     window.addEventListener('load', () => {
@@ -123,6 +124,16 @@
     }
 
     function loadBranches() {
+        // Reset chat review mode when loading branches (indicates user interaction)
+        if (isChatReviewMode) {
+            console.log('Resetting chat review mode - user is interacting with branch selection');
+            isChatReviewMode = false;
+            
+            // Show branch comparison section again
+            const branchComparisonSection = document.getElementById('branchComparisonSection');
+            branchComparisonSection?.classList.remove('hidden');
+        }
+        
         vscode.postMessage({ type: 'getBranches' });
     }
 
@@ -231,6 +242,12 @@
     }
 
     function updateReviewButtons() {
+        // Don't update UI if we're in chat review mode
+        if (isChatReviewMode) {
+            console.log('Skipping updateReviewButtons - in chat review mode');
+            return;
+        }
+        
         const baseBranch = selectedBaseBranch;
         const targetBranch = selectedTargetBranch;
         
@@ -255,6 +272,12 @@
     }
 
     function handleFilesListLoaded(files, baseBranch, targetBranch) {
+        // Don't update UI if we're in chat review mode
+        if (isChatReviewMode) {
+            console.log('Skipping handleFilesListLoaded - in chat review mode');
+            return;
+        }
+        
         previewSection?.classList.remove('hidden');
         
         if (!files || files.length === 0) {
@@ -326,6 +349,9 @@
     function handleReviewStarted() {
         console.log('handleReviewStarted called');
         
+        // Reset chat review mode when starting a regular review
+        isChatReviewMode = false;
+        
         isReviewing = true;
         if (mainButton) mainButton.classList.add('disabled');
         
@@ -333,6 +359,10 @@
         statusSection?.classList.add('hidden');
         resultsSection?.classList.remove('hidden');
         reviewStatus?.classList.remove('hidden');
+        
+        // Show branch comparison section for regular reviews
+        const branchComparisonSection = document.getElementById('branchComparisonSection');
+        branchComparisonSection?.classList.remove('hidden');
         
         if (reviewStatusText) reviewStatusText.textContent = 'Starting code review...';
         
@@ -347,6 +377,9 @@
     function handleChatReviewDisplaying() {
         console.log('handleChatReviewDisplaying called - results from chat');
         
+        // Set flag to indicate we're in chat review mode
+        isChatReviewMode = true;
+        
         // Make sure we show the results section and hide other sections
         previewSection?.classList.add('hidden');
         statusSection?.classList.add('hidden');
@@ -359,7 +392,7 @@
         // Hide the review status spinner since this is from chat
         reviewStatus?.classList.add('hidden');
         
-        console.log('UI prepared for chat review results - irrelevant sections hidden');
+        console.log('UI prepared for chat review results - irrelevant sections hidden, chat mode enabled');
     }
 
     function handleReviewProgress(message) {
@@ -392,6 +425,12 @@
         
         // Ensure results section is visible
         resultsSection?.classList.remove('hidden');
+        
+        // If not in chat review mode, show branch comparison section
+        if (!isChatReviewMode) {
+            const branchComparisonSection = document.getElementById('branchComparisonSection');
+            branchComparisonSection?.classList.remove('hidden');
+        }
         
         // Show final results
         if (results && results.length > 0) {

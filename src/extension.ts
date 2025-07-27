@@ -140,30 +140,28 @@ async function handleChat(
     }
     const results = await review(config, reviewRequest, stream, token);
 
-    // Open Source Control panel and show results in the Code Review view
-    await vscode.commands.executeCommand('workbench.view.scm');
+    // Check if there are any problems to show before opening the panel
+    const options = config.getOptions();
+    const filteredResults = results.fileComments.filter(file => {
+        return file.comments.some(comment => 
+            comment.severity >= options.minSeverity && comment.line > 0
+        );
+    });
     
-    // Populate the Code Review panel with results
-    if (codeReviewPanel && results.fileComments.length > 0) {
-        // Trigger the panel to show the review results
-        const filteredResults = results.fileComments.filter(file => {
-            const options = config.getOptions();
-            return file.comments.some(comment => 
-                comment.severity >= options.minSeverity && comment.line > 0
-            );
-        });
+    // Only open Source Control panel and show results if there are actual problems
+    if (codeReviewPanel && filteredResults.length > 0) {
+        // Open Source Control panel and show results in the Code Review view
+        await vscode.commands.executeCommand('workbench.view.scm');
         
-        if (filteredResults.length > 0) {
-            // Send the results to the Source Control panel
-            await codeReviewPanel.displayChatReviewResults(results);
-            
-            // Send message to indicate results are available in the Source Control panel with a clickable command
-            stream.markdown(`\n\n**Review results are also available in the Source Control panel**\n\n`);
-            stream.button({
-                command: 'codeReview.openCodeReviewPanel',
-                title: 'Open Code Review Panel'
-            });
-        }
+        // Send the results to the Source Control panel
+        await codeReviewPanel.displayChatReviewResults(results);
+        
+        // Send message to indicate results are available in the Source Control panel with a clickable command
+        stream.markdown(`\n\n**Review results are also available in the Source Control panel**\n\n`);
+        stream.button({
+            command: 'codeReview.openCodeReviewPanel',
+            title: 'Open Code Review Panel'
+        });
     }
 
     showReviewResults(config, results, stream, token);

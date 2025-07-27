@@ -506,28 +506,25 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             
             this._currentCommentIndex = -1;
             
-            // First, make sure the results section is visible and show the content
-            this._view.webview.postMessage({
-                type: 'reviewStarted'
-            });
-            
-            // Send a message to ensure we're in the right state for showing chat results
-            this._view.webview.postMessage({
-                type: 'chatReviewDisplaying'
-            });
+            // Send a message to configure the UI for chat review results
+            // This will hide all irrelevant sections and show only the results section
+
             
             // Small delay to ensure the UI is ready
             setTimeout(() => {
                 // Send results to webview
                 console.log('Sending reviewCompleted message to webview');
                 this._view?.webview.postMessage({
+                    type: 'chatReviewDisplaying'
+                });
+                this._view?.webview.postMessage({
                     type: 'reviewCompleted',
                     results: filteredResults,
                     errors: results.errors || []
                 });
-            }, 100);
+            }, 150);
 
-            // Show status section and hide status bar if no comments
+            // Hide status bar if no comments
             if (this._allComments.length === 0 && this._statusBarItem) {
                 this._statusBarItem.hide();
             }
