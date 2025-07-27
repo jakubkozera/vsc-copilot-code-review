@@ -1,7 +1,9 @@
 import { reviewDiff } from '@/review/review';
 import { Config } from '@/types/Config';
 import { FileComments } from '@/types/FileComments';
+import { ReviewComment } from '@/types/ReviewComment';
 import { ReviewRequest, ReviewScope } from '@/types/ReviewRequest';
+import { ReviewResult } from '@/types/ReviewResult';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { getConfig } from './config';
@@ -438,6 +440,98 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
         // Clean up status bar
         if (this._statusBarItem) {
             this._statusBarItem.dispose();
+        }
+    }
+
+    public async displayChatReviewResults(results: ReviewResult) {
+        console.log('displayChatReviewResults called with:', { 
+            hasView: !!this._view, 
+            fileCount: results.fileComments.length,
+            errorCount: results.errors.length 
+        });
+        
+        if (!this._view) {
+            console.error('No webview available for displaying chat review results');
+            return;
+        }
+
+        try {
+            // Ensure config is loaded
+            if (!this._config) {
+                console.log('Loading config for chat review results...');
+                this._config = await getConfig();
+            }
+
+            // Convert ReviewResult to the format expected by the webview
+            const options = this._config.getOptions();
+            console.log('Using options:', options);
+            
+            const filteredResults: FileComments[] = [];
+            
+            // Store all comments for navigation
+            this._allComments = [];
+            
+            for (const file of results.fileComments) {
+                const filteredFile = {
+                    ...file,
+                    comments: file.comments.filter((comment: ReviewComment) => 
+                        comment.severity >= options.minSeverity && comment.line > 0
+                    )
+                };
+                
+                if (filteredFile.comments.length > 0) {
+                    filteredResults.push(filteredFile);
+                    
+                    // Add comments to navigation array
+                    filteredFile.comments.forEach((comment: ReviewComment) => {
+                        this._allComments.push({
+                            filePath: file.target,
+                            line: comment.line,
+                            comment: comment.comment
+                        });
+                    });
+                }
+            }
+            
+            console.log('Filtered results:', { 
+                totalFiles: filteredResults.length, 
+                totalComments: this._allComments.length 
+            });
+            
+            this._currentCommentIndex = -1;
+            
+            // First, make sure the results section is visible and show the content
+            this._view.webview.postMessage({
+                type: 'reviewStarted'
+            });
+            
+            // Send a message to ensure we're in the right state for showing chat results
+            this._view.webview.postMessage({
+                type: 'chatReviewDisplaying'
+            });
+            
+            // Small delay to ensure the UI is ready
+            setTimeout(() => {
+                // Send results to webview
+                console.log('Sending reviewCompleted message to webview');
+                this._view?.webview.postMessage({
+                    type: 'reviewCompleted',
+                    results: filteredResults,
+                    errors: results.errors || []
+                });
+            }, 100);
+
+            // Show status section and hide status bar if no comments
+            if (this._allComments.length === 0 && this._statusBarItem) {
+                this._statusBarItem.hide();
+            }
+
+        } catch (error) {
+            console.error('Error displaying chat review results:', error);
+            this._view.webview.postMessage({
+                type: 'reviewError',
+                message: error instanceof Error ? error.message : 'Unknown error occurred'
+            });
         }
     }
 

@@ -152,6 +152,7 @@
     }
 
     function handleMessage(message) {
+        console.log('WebView received message:', message.type, message);
         switch (message.type) {
             case 'branchesLoaded':
                 populateBranches(message.branches, message.currentBranch, message.defaultBase);
@@ -181,6 +182,9 @@
                 break;
             case 'reviewStarted':
                 handleReviewStarted();
+                break;
+            case 'chatReviewDisplaying':
+                handleChatReviewDisplaying();
                 break;
             case 'reviewProgress':
                 handleReviewProgress(message.message);
@@ -320,6 +324,8 @@
     }
 
     function handleReviewStarted() {
+        console.log('handleReviewStarted called');
+        
         isReviewing = true;
         if (mainButton) mainButton.classList.add('disabled');
         
@@ -332,7 +338,24 @@
         
         // Clear previous results
         currentResults = [];
-        if (reviewResults) reviewResults.innerHTML = '';
+        if (reviewResults) {
+            reviewResults.innerHTML = '';
+            console.log('Cleared previous results');
+        }
+    }
+
+    function handleChatReviewDisplaying() {
+        console.log('handleChatReviewDisplaying called - results from chat');
+        
+        // Make sure we show the results section and hide other sections
+        previewSection?.classList.add('hidden');
+        statusSection?.classList.add('hidden');
+        resultsSection?.classList.remove('hidden');
+        
+        // Hide the review status spinner since this is from chat
+        reviewStatus?.classList.add('hidden');
+        
+        console.log('UI prepared for chat review results');
     }
 
     function handleReviewProgress(message) {
@@ -355,15 +378,24 @@
     }
 
     function handleReviewCompleted(results, errors) {
+        console.log('handleReviewCompleted called with:', { resultsCount: results?.length, errorsCount: errors?.length });
+        
         isReviewing = false;
         if (mainButton) mainButton.classList.remove('disabled');
         
         // Hide spinner
         reviewStatus?.classList.add('hidden');
         
+        // Ensure results section is visible
+        resultsSection?.classList.remove('hidden');
+        
         // Show final results
         if (results && results.length > 0) {
             currentResults = results;
+            console.log('Updating UI with results:', currentResults);
+        } else {
+            console.log('No results to display');
+            currentResults = [];
         }
         
         updateResultsUI(currentResults, errors, true);

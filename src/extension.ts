@@ -58,6 +58,17 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.openCodeReviewPanel',
+            async () => {
+                await vscode.commands.executeCommand('workbench.view.scm');
+                // Focus on the Code Review section if possible
+                await vscode.commands.executeCommand('codeReview.codeReview.focus');
+            }
+        )
+    );
+
+    context.subscriptions.push(
         vscode.lm.registerTool('review', new ReviewTool()),
         vscode.lm.registerTool(
             'reviewStaged',
@@ -128,6 +139,32 @@ async function handleChat(
         }
     }
     const results = await review(config, reviewRequest, stream, token);
+
+    // Open Source Control panel and show results in the Code Review view
+    await vscode.commands.executeCommand('workbench.view.scm');
+    
+    // Populate the Code Review panel with results
+    if (codeReviewPanel && results.fileComments.length > 0) {
+        // Trigger the panel to show the review results
+        const filteredResults = results.fileComments.filter(file => {
+            const options = config.getOptions();
+            return file.comments.some(comment => 
+                comment.severity >= options.minSeverity && comment.line > 0
+            );
+        });
+        
+        if (filteredResults.length > 0) {
+            // Send the results to the Source Control panel
+            await codeReviewPanel.displayChatReviewResults(results);
+            
+            // Send message to indicate results are available in the Source Control panel with a clickable command
+            stream.markdown(`\n\n📋 **Review results are also available in the Source Control panel**\n\n`);
+            stream.button({
+                command: 'codeReview.openCodeReviewPanel',
+                title: 'Open Code Review Panel'
+            });
+        }
+    }
 
     showReviewResults(config, results, stream, token);
 }

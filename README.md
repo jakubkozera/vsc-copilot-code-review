@@ -23,7 +23,14 @@ Switch to the Chat sidebar and ensure you are in `Ask` mode.
 
 **View Results**
 
-codeReview will respond with review comments grouped by file and sorted by severity.
+codeReview will respond with review comments grouped by file and sorted by severity. Additionally, review results are automatically displayed in the **Source Control panel** under the "Copilot Code Review" section for easy navigation and management.
+
+**Navigate Review Comments**
+
+- Results in the chat include clickable file references that jump to specific lines
+- Use the "Copilot Code Review" section in the Source Control panel for an organized view
+- Navigate between comments using the arrow buttons in comment threads
+- Use keyboard shortcuts: `Ctrl+Shift+N` (next) and `Ctrl+Shift+B` (previous) when a comment thread is active
 
 
 ![Demo](./images/demo.gif)
@@ -31,9 +38,11 @@ codeReview will respond with review comments grouped by file and sorted by sever
 
 ## Features
 
+- **Source Control Integration**: Review results appear both in Chat and in the dedicated "Copilot Code Review" panel within the Source Control view for easy navigation and file management.
 - **Only Copilot Required**: Uses Copilot Chat for reviewing changes.
 - **Model Selection**: Choose any language model available to VS Code via the **codeReview: Select Chat Model** command available in the Command Palette (press `Cmd+Shift+P` or `Ctrl+Shift+P`).
-- **Custom Instructions**: Add custom instructions via the `codeReview: Custom Prompt` setting (e.g., change the language of review comments by adding `- In the final JSON output, use Spanish for the  `comment` field.`).
+- **Custom Instructions**: Add custom instructions via the `codeReview: Custom Prompt` setting (e.g., change the language of review comments by adding `- In the final JSON output, use Spanish for the comment field.`).
+- **Interactive Navigation**: Navigate between review comments using keyboard shortcuts and inline buttons.
 - **Agent Support**: Adds tools to enable automatic reviews in agent mode:
   - `#review`: Reviews changes between two git references (branches, tags, or commits)
   - `#reviewStaged`: Reviews only staged changes in your working directory
