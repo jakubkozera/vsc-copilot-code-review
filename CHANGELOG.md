@@ -1,5 +1,8 @@
 # Change Log
 
+## [0.22.1]
+- Fixed: missing assets for web view added
+
 ## [0.22.0]
 - Added a web view for Code Review, enabling interactive browsing and commenting on code changes directly within the VS Code extension.
 
