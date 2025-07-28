@@ -371,13 +371,33 @@
             const fileName = getFileName(file.name);
             const statusClass = getStatusClass(file.status);
             const fileIcon = getFileIcon();
-            html += `<div class="file-item ${statusClass}">${fileIcon}${fileName}</div>`;
+            html += `<div class="file-item clickable-file ${statusClass}" data-file-path="${escapeHtml(file.name)}" data-base-branch="${escapeHtml(baseBranch)}" data-target-branch="${escapeHtml(targetBranch)}" title="Click to view diff">${fileIcon}${fileName}</div>`;
         });
         
         html += `<div class="file-item">Click a review button to start analysis...</div>`;
         
         if (previewFiles) {
             previewFiles.innerHTML = html;
+            
+            // Add click event listeners to file items
+            const clickableFiles = previewFiles.querySelectorAll('.clickable-file[data-file-path]');
+            clickableFiles.forEach(fileElement => {
+                fileElement.addEventListener('click', () => {
+                    const filePath = fileElement.getAttribute('data-file-path');
+                    const baseBranch = fileElement.getAttribute('data-base-branch');
+                    const targetBranch = fileElement.getAttribute('data-target-branch');
+                    
+                    if (filePath && baseBranch && targetBranch) {
+                        console.log('File clicked:', { filePath, baseBranch, targetBranch });
+                        vscode.postMessage({
+                            type: 'openFileDiff',
+                            filePath: filePath,
+                            baseBranch: baseBranch,
+                            targetBranch: targetBranch
+                        });
+                    }
+                });
+            });
         }
     }
 

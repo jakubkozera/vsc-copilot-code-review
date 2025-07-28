@@ -438,6 +438,15 @@ body {
     border-left: 2px solid transparent;
 }
 
+.file-item.clickable-file {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.file-item.clickable-file:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
 .file-item.status-added {
     border-left-color: #28a745; /* Green for added files */
 }

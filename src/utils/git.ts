@@ -37,6 +37,11 @@ export class Git {
         return this.gitRoot;
     }
 
+    /** Execute raw git command */
+    async raw(args: string[]): Promise<string> {
+        return await this.git.raw(args);
+    }
+
     /** Get list of files in the commit */
     async getChangedFiles(scope: ReviewScope): Promise<DiffFile[]> {
         const diffArgs = this.getDiffArgs(scope);

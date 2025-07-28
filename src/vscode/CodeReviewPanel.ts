@@ -15,6 +15,7 @@ type WebviewMessage =
     | { type: 'getFilesList'; targetBranch: string; baseBranch: string; reviewType: 'committed' | 'all' }
     | { type: 'reviewChanges'; targetBranch: string; baseBranch: string; reviewType: 'committed' | 'all' }
     | { type: 'openFile'; filePath: string; line: number; comment: string }
+    | { type: 'openFileDiff'; filePath: string; baseBranch: string; targetBranch: string }
     | { type: 'nextComment' }
     | { type: 'previousComment' };
 
@@ -70,6 +71,9 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                     break;
                 case 'openFile':
                     await this._openFileWithComment(data.filePath, data.line, data.comment);
+                    break;
+                case 'openFileDiff':
+                    await this._openFileDiff(data.filePath, data.baseBranch, data.targetBranch);
                     break;
                 case 'nextComment':
                     await this._navigateToComment('next');
@@ -317,6 +321,170 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
         );
         
         await this._showCommentAtIndex(this._currentCommentIndex);
+    }
+
+    private async _openFileDiff(filePath: string, baseBranch: string, targetBranch: string) {
+        console.log('_openFileDiff called with:', { filePath, baseBranch, targetBranch });
+        
+        if (!this._config) {
+            this._config = await getConfig();
+        }
+
+        try {
+            // Get the git root and build absolute path
+            const gitRoot = this._config.git.getGitRoot();
+            const absolutePath = path.join(gitRoot, filePath);
+            const fileName = path.basename(filePath);
+            
+            console.log('Opening diff for file:', { 
+                filePath, 
+                baseBranch, 
+                targetBranch,
+                absolutePath
+            });
+
+            // Use the Git extension's compare command which is more reliable
+            // Skip the git commands that might not work as expected and go straight to manual diff
+            console.log('Skipping git extension commands, going directly to manual diff creation...');
+
+            // Final fallback: Create a custom diff using git show command
+            console.log('Attempting manual diff creation...');
+            const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(gitRoot));
+            if (!workspaceFolder) {
+                throw new Error('Could not find workspace folder for git repository');
+            }
+
+            // Get the file content from the base branch using git show
+            const relativeFilePath = path.relative(gitRoot, absolutePath).replace(/\\/g, '/');
+            console.log('Using relative file path:', relativeFilePath);
+            
+            // Create a temporary document with the base branch content
+            let baseContent: string;
+            try {
+                console.log('Executing git show command:', `${baseBranch}:${relativeFilePath}`);
+                // Use the raw git command to get file content from the base branch
+                const gitShowResult = await this._config.git.raw(['show', `${baseBranch}:${relativeFilePath}`]);
+                baseContent = gitShowResult;
+                console.log('Git show succeeded, content length:', baseContent.length);
+            } catch (gitError) {
+                console.error('Failed to get file content from git:', gitError);
+                throw new Error(`Could not retrieve file content from ${baseBranch}: ${gitError instanceof Error ? gitError.message : 'Unknown error'}`);
+            }
+            
+            // Create a virtual document for the base version  
+            console.log('Creating virtual document for base version...');
+            const baseDocument = await vscode.workspace.openTextDocument({
+                content: baseContent,
+                language: this._getLanguageFromFileName(fileName)
+            });
+
+            // Open the current version
+            console.log('Opening current version document...');
+            const currentDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(absolutePath));
+
+            // Open the diff view
+            const title = `${fileName} (${baseBranch} ↔ ${targetBranch})`;
+            console.log('Opening diff view with title:', title);
+            await vscode.commands.executeCommand(
+                'vscode.diff',
+                baseDocument.uri,
+                currentDocument.uri,
+                title,
+                { preview: false }
+            );
+            console.log('Diff view opened successfully');
+
+        } catch (error) {
+            console.error('Error opening file diff:', error);
+            
+            // Ultimate fallback: try to open both files side by side
+            try {
+                console.log('Attempting fallback: opening files side by side...');
+                
+                // First, try to create a temp file with the base branch content
+                const gitRoot = this._config.git.getGitRoot();
+                const absolutePath = path.join(gitRoot, filePath);
+                const relativeFilePath = path.relative(gitRoot, absolutePath).replace(/\\/g, '/');
+                
+                try {
+                    const baseContent = await this._config.git.raw(['show', `${baseBranch}:${relativeFilePath}`]);
+                    const fileName = path.basename(filePath);
+                    
+                    // Create virtual document for base version
+                    const baseDocument = await vscode.workspace.openTextDocument({
+                        content: baseContent,
+                        language: this._getLanguageFromFileName(fileName)
+                    });
+                    
+                    // Open base version first
+                    await vscode.window.showTextDocument(baseDocument, { 
+                        viewColumn: vscode.ViewColumn.One,
+                        preview: false 
+                    });
+                    
+                    // Open current version in second column
+                    const currentDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(absolutePath));
+                    await vscode.window.showTextDocument(currentDocument, { 
+                        viewColumn: vscode.ViewColumn.Two,
+                        preview: false 
+                    });
+                    
+                    vscode.window.showInformationMessage(`Opened ${fileName} comparison: ${baseBranch} (left) vs ${targetBranch} (right)`);
+                    return;
+                    
+                } catch (gitFallbackError) {
+                    console.error('Git fallback also failed:', gitFallbackError);
+                    // Just open the current file if everything else fails
+                    const uri = vscode.Uri.file(absolutePath);
+                    const document = await vscode.workspace.openTextDocument(uri);
+                    await vscode.window.showTextDocument(document);
+                    
+                    vscode.window.showWarningMessage(`Could not compare versions, opened current file instead. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                }
+                
+            } catch (fallbackError) {
+                console.error('All fallback attempts failed:', fallbackError);
+                vscode.window.showErrorMessage(`Failed to open file: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`);
+            }
+        }
+    }
+
+    private _getLanguageFromFileName(fileName: string): string {
+        const ext = path.extname(fileName).toLowerCase();
+        const languageMap: { [key: string]: string } = {
+            '.js': 'javascript',
+            '.ts': 'typescript',
+            '.jsx': 'javascriptreact',
+            '.tsx': 'typescriptreact',
+            '.py': 'python',
+            '.java': 'java',
+            '.c': 'c',
+            '.cpp': 'cpp',
+            '.cs': 'csharp',
+            '.php': 'php',
+            '.rb': 'ruby',
+            '.go': 'go',
+            '.rs': 'rust',
+            '.swift': 'swift',
+            '.kt': 'kotlin',
+            '.scala': 'scala',
+            '.html': 'html',
+            '.css': 'css',
+            '.scss': 'scss',
+            '.sass': 'sass',
+            '.less': 'less',
+            '.xml': 'xml',
+            '.json': 'json',
+            '.yaml': 'yaml',
+            '.yml': 'yaml',
+            '.md': 'markdown',
+            '.sql': 'sql',
+            '.sh': 'shellscript',
+            '.bash': 'shellscript',
+            '.ps1': 'powershell',
+            '.dockerfile': 'dockerfile'
+        };
+        return languageMap[ext] || 'plaintext';
     }
 
     private async _navigateToComment(direction: 'next' | 'previous') {
