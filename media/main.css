@@ -331,6 +331,11 @@ body {
     background-color: rgba(255, 255, 255, 0.1);
 }
 
+/* Hide the chevron temporarily since dropdown is not needed */
+.button-chevron-area {
+    display: none !important;
+}
+
 .dropdown-arrow {
     transition: transform 0.2s ease;
     width: 16px;

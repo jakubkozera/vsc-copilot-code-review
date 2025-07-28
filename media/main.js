@@ -395,7 +395,7 @@
             return;
         }
 
-        let html = `<div class="file-item">Reviewing changes from <strong>${baseBranch}</strong> to <strong>${targetBranch}</strong></div>`;
+        let html = `<div class="file-item" style="display:block;">Reviewing changes from <strong>${baseBranch}</strong> to <strong>${targetBranch}</strong></div>`;
         
         files.forEach(file => {
             const fileName = getFileName(file.name);
