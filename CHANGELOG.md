@@ -1,5 +1,8 @@
 # Change Log
 
+## [0.22.0]
+- Added a web view for Code Review, enabling interactive browsing and commenting on code changes directly within the VS Code extension.
+
 ## [0.21.0]
 - Same as 0.20.1.
 
@@ -25,10 +28,9 @@ Note: If you are using the custom prompt setting to change the comment language,
 - Add #reviewStaged and #reviewUnstaged tools for use in agent mode.
 
 ## [0.17.2]
-Includes changes from 0.17.0 and 0.17.1.
 Highlight: #review tool to allow usage in agent mode.
 Other changes:
-- Add "Max Input Tokens Fraction" setting to customize how much of the model's token window may be used.
+
 
 ## [0.17.1] (pre-release)
 - Avoid potential initialization errors by loading chat model only on demand and offering fallback options. The configured model will no longer be reset without user interaction.
