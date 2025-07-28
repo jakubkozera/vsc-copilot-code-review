@@ -554,14 +554,14 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             
             // Create a MarkdownString and enable command URIs and HTML
             const markdownBody = new vscode.MarkdownString();
-            markdownBody.appendMarkdown(`**codeReview Review Comment (${currentNum}/${totalNum}):**\n\n${commentData.comment}`);
+            markdownBody.appendMarkdown(`**Review Comment (${currentNum}/${totalNum}):**\n\n${commentData.comment}`);
             markdownBody.isTrusted = true; // Allow command URIs
             markdownBody.supportHtml = true; // Allow HTML for better markdown rendering
             
             const comment: vscode.Comment = {
                 body: markdownBody,
                 mode: vscode.CommentMode.Preview,
-                author: { name: 'codeReview Bot', iconPath: vscode.Uri.joinPath(this._extensionUri, 'images/icon.png') },
+                author: { name: 'Github Copilot Code Reviewer', iconPath: vscode.Uri.joinPath(this._extensionUri, 'images/icon.png') },
                 contextValue: 'codeReview-comment'
             };
             
@@ -576,7 +576,7 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             // Update status bar
             if (this._statusBarItem) {
                 this._statusBarItem.text = `$(comment) codeReview: ${currentNum}/${totalNum}`;
-                this._statusBarItem.tooltip = `codeReview Review Comment ${currentNum} of ${totalNum}`;
+                this._statusBarItem.tooltip = `Review Comment ${currentNum} of ${totalNum}`;
                 this._statusBarItem.command = 'codeReview.nextComment';
                 this._statusBarItem.show();
             }
