@@ -67,6 +67,12 @@
         "title": "Previous Comment", 
         "category": "codeReview",
         "icon": "$(arrow-left)"
+      },
+      {
+        "command": "codeReview.applyCurrentAdjustment",
+        "title": "Apply Fix",
+        "category": "codeReview",
+        "icon": "$(wand)"
       }
     ],
     "chatParticipants": [
@@ -186,6 +192,12 @@
           "when": "commentThread == codeReview-review",
           "group": "navigation@2", 
           "icon": "$(arrow-right)"
+        },
+        {
+          "command": "codeReview.applyCurrentAdjustment",
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@3",
+          "icon": "$(wand)"
         }
       ],
       "comments/commentThread/title": [
@@ -200,6 +212,12 @@
           "when": "commentThread == codeReview-review",
           "group": "navigation@2",
           "icon": "$(arrow-right)"
+        },
+        {
+          "command": "codeReview.applyCurrentAdjustment",
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@3",
+          "icon": "$(wand)"
         }
       ],
       "comments/comment/title": [
@@ -214,6 +232,12 @@
           "when": "comment == codeReview-comment",
           "group": "navigation@2",
           "icon": "$(arrow-right)"
+        },
+        {
+          "command": "codeReview.applyCurrentAdjustment",
+          "when": "comment == codeReview-comment",
+          "group": "navigation@3",
+          "icon": "$(wand)"
         }
       ]
     },

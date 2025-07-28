@@ -69,6 +69,79 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.applyCurrentAdjustment',
+            async () => {
+                try {
+                    await codeReviewPanel.applyCurrentCommentAdjustment();
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                    vscode.window.showErrorMessage(`Failed to apply current adjustment: ${errorMessage}`);
+                }
+            }
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.applyAdjustment',
+            async (...args: unknown[]) => {
+                try {
+                    console.log('applyAdjustment command called with args:', args);
+                    console.log('Args details:', args.map((arg, i) => `arg${i}: ${typeof arg} = ${String(arg)}`));
+
+                    let adjustmentData: {
+                        filePath: string;
+                        originalCode: string;
+                        adjustedCode: string;
+                        startLine?: number;
+                        endLine?: number;
+                    };
+
+                    // Handle VS Code command URI with JSON array argument
+                    if (args.length === 1 && Array.isArray(args[0]) && args[0].length === 1) {
+                        console.log('Using array format (args[0][0])');
+                        adjustmentData = args[0][0] as typeof adjustmentData;
+                    } else if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
+                        console.log('Using single object argument');
+                        adjustmentData = args[0] as typeof adjustmentData;
+                    } else if (args.length === 1 && typeof args[0] === 'string') {
+                        console.log('Using JSON string argument');
+                        // JSON string argument (from command URI)
+                        const jsonStr = decodeURIComponent(args[0]);
+                        console.log('Decoded JSON string:', jsonStr);
+                        const parsed = JSON.parse(jsonStr) as unknown;
+                        if (Array.isArray(parsed) && parsed.length === 1) {
+                            adjustmentData = parsed[0] as typeof adjustmentData;
+                        } else {
+                            adjustmentData = parsed as typeof adjustmentData;
+                        }
+                    } else if (args.length >= 3 && typeof args[0] === 'string' && typeof args[1] === 'string' && typeof args[2] === 'string') {
+                        console.log('Using separate string arguments');
+                        adjustmentData = {
+                            filePath: decodeURIComponent(args[0]),
+                            originalCode: decodeURIComponent(args[1]),
+                            adjustedCode: decodeURIComponent(args[2]),
+                            startLine: (args[3] && typeof args[3] === 'string') ? parseInt(decodeURIComponent(args[3])) : undefined,
+                            endLine: (args[4] && typeof args[4] === 'string') ? parseInt(decodeURIComponent(args[4])) : undefined
+                        };
+                    } else {
+                        console.error('Invalid argument format - all args:', args);
+                        throw new Error(`Invalid argument format for applyAdjustment command. Received ${args.length} args of types: ${args.map(arg => typeof arg).join(', ')}`);
+                    }
+
+                    console.log('Final adjustmentData:', adjustmentData);
+                    await codeReviewPanel.applyAdjustment(adjustmentData);
+                } catch (error) {
+                    console.error('Error in applyAdjustment command:', error);
+                    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                    vscode.window.showErrorMessage(`Failed to apply adjustment: ${errorMessage}`);
+                }
+            }
+        )
+    );
+
+    context.subscriptions.push(
         vscode.lm.registerTool('review', new ReviewTool()),
         vscode.lm.registerTool(
             'reviewStaged',

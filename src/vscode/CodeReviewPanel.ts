@@ -1,7 +1,7 @@
 import { reviewDiff } from '@/review/review';
 import { Config } from '@/types/Config';
 import { FileComments } from '@/types/FileComments';
-import { ReviewComment } from '@/types/ReviewComment';
+import { ProposedAdjustment, ReviewComment } from '@/types/ReviewComment';
 import { ReviewRequest, ReviewScope } from '@/types/ReviewRequest';
 import { ReviewResult } from '@/types/ReviewResult';
 import * as path from 'path';
@@ -17,14 +17,15 @@ type WebviewMessage =
     | { type: 'openFile'; filePath: string; line: number; comment: string }
     | { type: 'openFileDiff'; filePath: string; baseBranch: string; targetBranch: string }
     | { type: 'nextComment' }
-    | { type: 'previousComment' };
+    | { type: 'previousComment' }
+    | { type: 'applyAdjustment'; filePath: string; originalCode: string; adjustedCode: string; startLine?: number; endLine?: number };
 
 export class CodeReviewPanel implements vscode.WebviewViewProvider {
     public static readonly viewType = 'codeReview.codeReview';
     private _view?: vscode.WebviewView;
     private _config?: Config;
     private _commentController?: vscode.CommentController;
-    private _allComments: Array<{filePath: string, line: number, comment: string}> = [];
+    private _allComments: Array<{filePath: string, line: number, comment: string, proposedAdjustment?: ProposedAdjustment}> = [];
     private _currentCommentIndex: number = -1;
     private _commentThreads: vscode.CommentThread[] = [];
     private _statusBarItem?: vscode.StatusBarItem;
@@ -80,6 +81,9 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                     break;
                 case 'previousComment':
                     await this._navigateToComment('previous');
+                    break;
+                case 'applyAdjustment':
+                    await this._applyAdjustment(data.filePath, data.originalCode, data.adjustedCode, data.startLine, data.endLine);
                     break;
             }
         });
@@ -269,7 +273,8 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                         this._allComments.push({
                             filePath: file.target,
                             line: comment.line,
-                            comment: comment.comment
+                            comment: comment.comment,
+                            proposedAdjustment: comment.proposedAdjustment
                         });
                     });
                     
@@ -554,14 +559,34 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             
             // Create a MarkdownString and enable command URIs and HTML
             const markdownBody = new vscode.MarkdownString();
-            markdownBody.appendMarkdown(`**codeReview Review Comment (${currentNum}/${totalNum}):**\n\n${commentData.comment}`);
+            markdownBody.appendMarkdown(`**Review Comment (${currentNum}/${totalNum}):**\n\n${commentData.comment}`);
+            
+            // Add proposed adjustment if available
+            if (commentData.proposedAdjustment) {
+                const adjustment = commentData.proposedAdjustment;
+                markdownBody.appendMarkdown(`\n\n---\n\n**📝 Proposed Adjustment:**\n\n${adjustment.description}`);
+                markdownBody.appendMarkdown(`\n\n**Original:**\n\`\`\`\n${adjustment.originalCode}\n\`\`\``);
+                markdownBody.appendMarkdown(`\n\n**Proposed:**\n\`\`\`\n${adjustment.adjustedCode}\n\`\`\``);
+                
+                // Create command URI with JSON array format (VS Code standard)
+                const commandArgs = JSON.stringify([{
+                    filePath: commentData.filePath,
+                    originalCode: adjustment.originalCode,
+                    adjustedCode: adjustment.adjustedCode,
+                    startLine: adjustment.startLine,
+                    endLine: adjustment.endLine
+                }]);
+                
+                markdownBody.appendMarkdown(`\n\n[Apply Fix](command:codeReview.applyAdjustment?${encodeURIComponent(commandArgs)})`);
+            }
+            
             markdownBody.isTrusted = true; // Allow command URIs
             markdownBody.supportHtml = true; // Allow HTML for better markdown rendering
             
             const comment: vscode.Comment = {
                 body: markdownBody,
                 mode: vscode.CommentMode.Preview,
-                author: { name: 'codeReview Bot', iconPath: vscode.Uri.joinPath(this._extensionUri, 'images/icon.png') },
+                author: { name: 'Github Copilot Code Reviewer', iconPath: vscode.Uri.joinPath(this._extensionUri, 'images/icon.png') },
                 contextValue: 'codeReview-comment'
             };
             
@@ -576,7 +601,7 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             // Update status bar
             if (this._statusBarItem) {
                 this._statusBarItem.text = `$(comment) codeReview: ${currentNum}/${totalNum}`;
-                this._statusBarItem.tooltip = `codeReview Review Comment ${currentNum} of ${totalNum}`;
+                this._statusBarItem.tooltip = `Review Comment ${currentNum} of ${totalNum}`;
                 this._statusBarItem.command = 'codeReview.nextComment';
                 this._statusBarItem.show();
             }
@@ -661,7 +686,8 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                         this._allComments.push({
                             filePath: file.target,
                             line: comment.line,
-                            comment: comment.comment
+                            comment: comment.comment,
+                            proposedAdjustment: comment.proposedAdjustment
                         });
                     });
                 }
@@ -703,6 +729,214 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                 type: 'reviewError',
                 message: error instanceof Error ? error.message : 'Unknown error occurred'
             });
+        }
+    }
+
+    private async _applyAdjustment(filePath: string, originalCode: string, adjustedCode: string, startLine?: number, endLine?: number) {
+        try {
+            if (!this._config) {
+                this._config = await getConfig();
+            }
+
+            // Convert relative path to absolute path using git root
+            const gitRoot = this._config.git.getGitRoot();
+            const absolutePath = path.join(gitRoot, filePath);
+            
+            // Open the file
+            const uri = vscode.Uri.file(absolutePath);
+            const document = await vscode.workspace.openTextDocument(uri);
+            const editor = await vscode.window.showTextDocument(document);
+            
+            // Find the location of the original code in the document
+            const text = document.getText();
+            let targetRange: vscode.Range;
+            
+            if (startLine !== undefined && endLine !== undefined) {
+                // Use provided line range
+                const start = new vscode.Position(Math.max(0, startLine - 1), 0);
+                const end = new vscode.Position(Math.max(0, endLine - 1), document.lineAt(Math.min(endLine - 1, document.lineCount - 1)).text.length);
+                targetRange = new vscode.Range(start, end);
+            } else {
+                // Search for the original code in the document
+                const originalCodeIndex = text.indexOf(originalCode);
+                if (originalCodeIndex === -1) {
+                    vscode.window.showErrorMessage(`Could not find the original code in ${filePath}. The file may have been modified since the review.`);
+                    return;
+                }
+                
+                // Convert character index to line/column position
+                const startPos = document.positionAt(originalCodeIndex);
+                const endPos = document.positionAt(originalCodeIndex + originalCode.length);
+                targetRange = new vscode.Range(startPos, endPos);
+            }
+            
+            // Apply the edit
+            const workspaceEdit = new vscode.WorkspaceEdit();
+            workspaceEdit.replace(uri, targetRange, adjustedCode);
+            
+            const success = await vscode.workspace.applyEdit(workspaceEdit);
+            
+            if (success) {
+                vscode.window.showInformationMessage(`Applied code adjustment to ${path.basename(filePath)}`);
+                
+                // Navigate to the applied change
+                const newEndPos = document.positionAt(targetRange.start.character + adjustedCode.length);
+                editor.selection = new vscode.Selection(targetRange.start, newEndPos);
+                editor.revealRange(new vscode.Range(targetRange.start, newEndPos), vscode.TextEditorRevealType.InCenter);
+            } else {
+                vscode.window.showErrorMessage(`Failed to apply code adjustment to ${filePath}`);
+            }
+            
+        } catch (error) {
+            console.error('Error applying adjustment:', error);
+            vscode.window.showErrorMessage(`Error applying adjustment: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    // Method to apply the adjustment for the current comment being viewed
+    async applyCurrentCommentAdjustment(): Promise<void> {
+        if (this._currentCommentIndex < 0 || this._currentCommentIndex >= this._allComments.length) {
+            vscode.window.showWarningMessage('No current comment with adjustment available');
+            return;
+        }
+
+        const currentComment = this._allComments[this._currentCommentIndex];
+        if (!currentComment.proposedAdjustment) {
+            vscode.window.showWarningMessage('Current comment does not have a proposed adjustment');
+            return;
+        }
+
+        const adjustment = currentComment.proposedAdjustment;
+        await this.applyAdjustment({
+            filePath: currentComment.filePath,
+            originalCode: adjustment.originalCode,
+            adjustedCode: adjustment.adjustedCode,
+            startLine: adjustment.startLine,
+            endLine: adjustment.endLine
+        });
+    }
+
+    // Method to apply an adjustment from a comment
+    async applyAdjustment(adjustmentData: {
+        filePath: string;
+        originalCode: string;
+        adjustedCode: string;
+        startLine?: number;
+        endLine?: number;
+    }): Promise<void> {
+        try {
+            if (!this._config) {
+                this._config = await getConfig();
+            }
+
+            // Convert relative path to absolute path using git root
+            const gitRoot = this._config.git.getGitRoot();
+            const absolutePath = path.join(gitRoot, adjustmentData.filePath);
+            
+            console.log('Applying adjustment:', {
+                filePath: adjustmentData.filePath,
+                absolutePath,
+                originalCodeLength: adjustmentData.originalCode.length,
+                adjustedCodeLength: adjustmentData.adjustedCode.length,
+                startLine: adjustmentData.startLine,
+                endLine: adjustmentData.endLine
+            });
+
+            const document = await vscode.workspace.openTextDocument(absolutePath);
+            const editor = await vscode.window.showTextDocument(document);
+
+            let range: vscode.Range;
+            
+            // Priority 1: Use line range if available
+            if (adjustmentData.startLine !== undefined && adjustmentData.endLine !== undefined) {
+                console.log('Using line range approach');
+                range = new vscode.Range(
+                    Math.max(0, adjustmentData.startLine - 1),
+                    0,
+                    Math.max(0, Math.min(adjustmentData.endLine - 1, document.lineCount - 1)),
+                    document.lineAt(Math.min(adjustmentData.endLine - 1, document.lineCount - 1)).text.length
+                );
+            } else {
+                // Priority 2: Try exact string match
+                console.log('Trying exact string match');
+                const text = document.getText();
+                let originalIndex = text.indexOf(adjustmentData.originalCode);
+                
+                if (originalIndex === -1) {
+                    console.log('Exact match failed, trying normalized search');
+                    // Priority 3: Try normalized string matching (ignore whitespace differences)
+                    const normalizeCode = (code: string) => code.replace(/\s+/g, ' ').trim();
+                    const normalizedOriginal = normalizeCode(adjustmentData.originalCode);
+                    const normalizedText = normalizeCode(text);
+                    
+                    const normalizedIndex = normalizedText.indexOf(normalizedOriginal);
+                    if (normalizedIndex !== -1) {
+                        // Find the actual position by counting characters with original spacing
+                        let actualIndex = 0;
+                        let normalizedPos = 0;
+                        for (let i = 0; i < text.length && normalizedPos < normalizedIndex; i++) {
+                            if (!/\s/.test(text[i])) {
+                                normalizedPos++;
+                            }
+                            actualIndex = i + 1;
+                        }
+                        originalIndex = actualIndex;
+                        console.log('Found using normalized matching at index:', originalIndex);
+                    }
+                }
+                
+                if (originalIndex === -1) {
+                    // Priority 4: Show user a selection dialog for manual selection
+                    const choice = await vscode.window.showErrorMessage(
+                        'Could not automatically locate the code to replace. Would you like to select it manually?',
+                        'Select Manually',
+                        'Cancel'
+                    );
+                    
+                    if (choice === 'Select Manually') {
+                        const selection = editor.selection;
+                        if (selection.isEmpty) {
+                            vscode.window.showInformationMessage('Please select the code you want to replace and try again.');
+                            return;
+                        }
+                        range = selection;
+                    } else {
+                        return;
+                    }
+                } else {
+                    const startPos = document.positionAt(originalIndex);
+                    const endPos = document.positionAt(originalIndex + adjustmentData.originalCode.length);
+                    range = new vscode.Range(startPos, endPos);
+                }
+            }
+
+            console.log('Applying edit at range:', {
+                startLine: range.start.line,
+                startChar: range.start.character,
+                endLine: range.end.line,
+                endChar: range.end.character
+            });
+
+            const success = await editor.edit(editBuilder => {
+                editBuilder.replace(range, adjustmentData.adjustedCode);
+            });
+
+            if (success) {
+                vscode.window.showInformationMessage('Code adjustment applied successfully!');
+                
+                // Navigate to the applied change
+                const newEndPos = document.positionAt(
+                    document.offsetAt(range.start) + adjustmentData.adjustedCode.length
+                );
+                editor.selection = new vscode.Selection(range.start, newEndPos);
+                editor.revealRange(new vscode.Range(range.start, newEndPos), vscode.TextEditorRevealType.InCenter);
+            } else {
+                vscode.window.showErrorMessage('Failed to apply the code adjustment.');
+            }
+        } catch (error) {
+            console.error('Error in applyAdjustment:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            vscode.window.showErrorMessage(`Failed to apply adjustment: ${errorMessage}`);
         }
     }
 

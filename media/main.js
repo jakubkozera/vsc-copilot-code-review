@@ -593,10 +593,17 @@
             `;
             
             file.comments.forEach(comment => {
+                console.log('Processing comment:', comment);
+                console.log('Has proposedAdjustment:', !!comment.proposedAdjustment);
+                if (comment.proposedAdjustment) {
+                    console.log('Proposed adjustment:', comment.proposedAdjustment);
+                }
+                
                 html += `
                     <div class="result-comment severity-${comment.severity}" data-file-path="${escapeHtml(file.target)}" data-line="${comment.line}" data-comment="${escapeHtml(comment.comment)}">
                         <div class="comment-line">Line ${comment.line}</div>
                         <div class="comment-text">${parseMarkdown(comment.comment)}</div>
+                        ${comment.proposedAdjustment ? generateProposedAdjustmentHTML(comment.proposedAdjustment, file.target) : ''}
                     </div>
                 `;
             });
@@ -682,6 +689,45 @@
                 }
             });
         });
+
+        // Add click event listeners to apply adjustment buttons
+        const applyButtons = reviewResults.querySelectorAll('.apply-adjustment-btn');
+        applyButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                e.stopPropagation(); // Prevent triggering comment click
+                
+                const filePath = button.getAttribute('data-file-path');
+                const originalCode = button.getAttribute('data-original-code');
+                const adjustedCode = button.getAttribute('data-adjusted-code');
+                const startLine = button.getAttribute('data-start-line');
+                const endLine = button.getAttribute('data-end-line');
+                
+                if (filePath && originalCode && adjustedCode) {
+                    // Send message without confirmation dialog (webview is sandboxed)
+                    const fileName = filePath.split('/').pop() || filePath;
+                    console.log(`Applying adjustment to ${fileName}`);
+                    
+                    const message = {
+                        type: 'applyAdjustment',
+                        filePath: filePath,
+                        originalCode: originalCode,
+                        adjustedCode: adjustedCode
+                    };
+                    
+                    if (startLine) message.startLine = parseInt(startLine, 10);
+                    if (endLine) message.endLine = parseInt(endLine, 10);
+                    
+                    vscode.postMessage(message);
+                    
+                    // Disable button to prevent double-clicks
+                    if (button instanceof HTMLButtonElement) {
+                        button.disabled = true;
+                        button.textContent = 'Applied';
+                        button.style.opacity = '0.6';
+                    }
+                }
+            });
+        });
     }
 
     function showResults(results, errors) {
@@ -698,6 +744,46 @@
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function generateProposedAdjustmentHTML(proposedAdjustment, filePath) {
+        const adjustmentId = `adjustment-${Math.random().toString(36).substr(2, 9)}`;
+        
+        return `
+            <div class="proposed-adjustment">
+                <div class="proposed-adjustment-header">
+                    <div class="proposed-adjustment-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="adjustment-icon">
+                            <path d="M12 20h9"></path>
+                            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                        </svg>
+                        Proposed Adjustment
+                    </div>
+                    <button class="apply-adjustment-btn" 
+                            data-file-path="${escapeHtml(filePath)}"
+                            data-original-code="${escapeHtml(proposedAdjustment.originalCode)}"
+                            data-adjusted-code="${escapeHtml(proposedAdjustment.adjustedCode)}"
+                            ${proposedAdjustment.startLine ? `data-start-line="${proposedAdjustment.startLine}"` : ''}
+                            ${proposedAdjustment.endLine ? `data-end-line="${proposedAdjustment.endLine}"` : ''}>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20,6 9,17 4,12"></polyline>
+                        </svg>
+                        Apply
+                    </button>
+                </div>
+                <div class="proposed-adjustment-description">${escapeHtml(proposedAdjustment.description)}</div>
+                <div class="code-diff">
+                    <div class="diff-section">
+                        <div class="diff-header diff-removed">- Original</div>
+                        <pre class="diff-code diff-code-removed"><code>${escapeHtml(proposedAdjustment.originalCode)}</code></pre>
+                    </div>
+                    <div class="diff-section">
+                        <div class="diff-header diff-added">+ Proposed</div>
+                        <pre class="diff-code diff-code-added"><code>${escapeHtml(proposedAdjustment.adjustedCode)}</code></pre>
+                    </div>
+                </div>
+            </div>
+        `;
     }
 
     // Simple markdown parser for comment text

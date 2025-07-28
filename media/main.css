@@ -712,3 +712,146 @@ body {
     color: var(--vscode-descriptionForeground);
     font-style: italic;
 }
+
+/* Proposed Adjustments Styles */
+.proposed-adjustment {
+    margin-top: 12px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    background-color: var(--vscode-editor-background);
+    overflow: hidden;
+}
+
+.proposed-adjustment-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background-color: var(--vscode-list-inactiveSelectionBackground);
+    border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.proposed-adjustment-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+}
+
+.adjustment-icon {
+    width: 16px;
+    height: 16px;
+    opacity: 0.8;
+}
+
+.apply-adjustment-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border: 1px solid var(--vscode-button-border, transparent);
+    border-radius: 2px;
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.apply-adjustment-btn:hover:not(:disabled) {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.apply-adjustment-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.apply-adjustment-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+.proposed-adjustment-description {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+    background-color: var(--vscode-textCodeBlock-background);
+    border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.code-diff {
+    display: flex;
+    flex-direction: column;
+}
+
+.diff-section {
+    display: flex;
+    flex-direction: column;
+}
+
+.diff-header {
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--vscode-editor-font-family);
+}
+
+.diff-removed {
+    background-color: rgba(248, 81, 73, 0.1);
+    color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+    border-bottom: 1px solid rgba(248, 81, 73, 0.2);
+}
+
+.diff-added {
+    background-color: rgba(46, 160, 67, 0.1);
+    color: var(--vscode-gitDecoration-addedResourceForeground, #2ea043);
+    border-bottom: 1px solid rgba(46, 160, 67, 0.2);
+}
+
+.diff-code {
+    margin: 0;
+    padding: 8px 12px;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 12px;
+    line-height: 1.4;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.diff-code-removed {
+    background-color: rgba(248, 81, 73, 0.05);
+    border-left: 3px solid var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+}
+
+.diff-code-added {
+    background-color: rgba(46, 160, 67, 0.05);
+    border-left: 3px solid var(--vscode-gitDecoration-addedResourceForeground, #2ea043);
+}
+
+.diff-code code {
+    background: none;
+    padding: 0;
+    border: none;
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    line-height: inherit;
+}
+
+/* Ensure proposed adjustments don't interfere with comment click behavior */
+.proposed-adjustment * {
+    pointer-events: auto;
+}
+
+.result-comment .proposed-adjustment {
+    pointer-events: none;
+}
+
+.result-comment .proposed-adjustment .apply-adjustment-btn {
+    pointer-events: auto;
+}
