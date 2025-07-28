@@ -8,85 +8,139 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { getConfig } from './config';
 
-type WebviewMessage = 
+type WebviewMessage =
     | { type: 'getBranches' }
     | { type: 'selectBaseBranch' }
     | { type: 'selectTargetBranch' }
-    | { type: 'getFilesList'; targetBranch: string; baseBranch: string; reviewType: 'committed' | 'all' }
-    | { type: 'reviewChanges'; targetBranch: string; baseBranch: string; reviewType: 'committed' | 'all' }
+    | {
+          type: 'getFilesList';
+          targetBranch: string;
+          baseBranch: string;
+          reviewType: 'committed' | 'all';
+      }
+    | {
+          type: 'reviewChanges';
+          targetBranch: string;
+          baseBranch: string;
+          reviewType: 'committed' | 'all';
+      }
     | { type: 'openFile'; filePath: string; line: number; comment: string }
-    | { type: 'openFileDiff'; filePath: string; baseBranch: string; targetBranch: string }
+    | {
+          type: 'openFileDiff';
+          filePath: string;
+          baseBranch: string;
+          targetBranch: string;
+      }
     | { type: 'nextComment' }
     | { type: 'previousComment' }
-    | { type: 'applyAdjustment'; filePath: string; originalCode: string; adjustedCode: string; startLine?: number; endLine?: number };
+    | {
+          type: 'applyAdjustment';
+          filePath: string;
+          originalCode: string;
+          adjustedCode: string;
+          startLine?: number;
+          endLine?: number;
+      };
 
 export class CodeReviewPanel implements vscode.WebviewViewProvider {
     public static readonly viewType = 'codeReview.codeReview';
     private _view?: vscode.WebviewView;
     private _config?: Config;
     private _commentController?: vscode.CommentController;
-    private _allComments: Array<{filePath: string, line: number, comment: string, proposedAdjustment?: ProposedAdjustment}> = [];
+    private _allComments: Array<{
+        filePath: string;
+        line: number;
+        comment: string;
+        proposedAdjustment?: ProposedAdjustment;
+    }> = [];
     private _currentCommentIndex: number = -1;
     private _commentThreads: vscode.CommentThread[] = [];
     private _statusBarItem?: vscode.StatusBarItem;
 
     constructor(private readonly _extensionUri: vscode.Uri) {
-        this._statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+        this._statusBarItem = vscode.window.createStatusBarItem(
+            vscode.StatusBarAlignment.Right,
+            100
+        );
     }
 
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
         _context: vscode.WebviewViewResolveContext,
-        _token: vscode.CancellationToken,
+        _token: vscode.CancellationToken
     ) {
         // Suppress unused parameter warnings
         void _context;
         void _token;
-        
+
         this._view = webviewView;
 
         webviewView.webview.options = {
             enableScripts: true,
-            localResourceRoots: [this._extensionUri]
+            localResourceRoots: [this._extensionUri],
         };
 
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-        webviewView.webview.onDidReceiveMessage(async (data: WebviewMessage) => {
-            console.log('Received message from webview:', data);
-            switch (data.type) {
-                case 'getBranches':
-                    await this._getBranches();
-                    break;
-                case 'selectBaseBranch':
-                    await this._selectBaseBranch();
-                    break;
-                case 'selectTargetBranch':
-                    await this._selectTargetBranch();
-                    break;
-                case 'getFilesList':
-                    await this._getFilesList(data.targetBranch, data.baseBranch, data.reviewType);
-                    break;
-                case 'reviewChanges':
-                    await this._reviewChanges(data.targetBranch, data.baseBranch, data.reviewType);
-                    break;
-                case 'openFile':
-                    await this._openFileWithComment(data.filePath, data.line, data.comment);
-                    break;
-                case 'openFileDiff':
-                    await this._openFileDiff(data.filePath, data.baseBranch, data.targetBranch);
-                    break;
-                case 'nextComment':
-                    await this._navigateToComment('next');
-                    break;
-                case 'previousComment':
-                    await this._navigateToComment('previous');
-                    break;
-                case 'applyAdjustment':
-                    await this._applyAdjustment(data.filePath, data.originalCode, data.adjustedCode, data.startLine, data.endLine);
-                    break;
+        webviewView.webview.onDidReceiveMessage(
+            async (data: WebviewMessage) => {
+                console.log('Received message from webview:', data);
+                switch (data.type) {
+                    case 'getBranches':
+                        await this._getBranches();
+                        break;
+                    case 'selectBaseBranch':
+                        await this._selectBaseBranch();
+                        break;
+                    case 'selectTargetBranch':
+                        await this._selectTargetBranch();
+                        break;
+                    case 'getFilesList':
+                        await this._getFilesList(
+                            data.targetBranch,
+                            data.baseBranch,
+                            data.reviewType
+                        );
+                        break;
+                    case 'reviewChanges':
+                        await this._reviewChanges(
+                            data.targetBranch,
+                            data.baseBranch,
+                            data.reviewType
+                        );
+                        break;
+                    case 'openFile':
+                        await this._openFileWithComment(
+                            data.filePath,
+                            data.line,
+                            data.comment
+                        );
+                        break;
+                    case 'openFileDiff':
+                        await this._openFileDiff(
+                            data.filePath,
+                            data.baseBranch,
+                            data.targetBranch
+                        );
+                        break;
+                    case 'nextComment':
+                        await this._navigateToComment('next');
+                        break;
+                    case 'previousComment':
+                        await this._navigateToComment('previous');
+                        break;
+                    case 'applyAdjustment':
+                        await this._applyAdjustment(
+                            data.filePath,
+                            data.originalCode,
+                            data.adjustedCode,
+                            data.startLine,
+                            data.endLine
+                        );
+                        break;
+                }
             }
-        });
+        );
     }
 
     private async _getBranches() {
@@ -95,17 +149,35 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
         }
 
         try {
-            const branchList = await this._config.git.getBranchList(undefined, 50);
-            const branches = branchList.map(b => b.ref).filter(ref => typeof ref === 'string');
-            
+            const branchList = await this._config.git.getBranchList(
+                undefined,
+                50
+            );
+            const branches = branchList
+                .map((b) => b.ref)
+                .filter((ref) => typeof ref === 'string');
+
             // Get current branch by finding the one marked as current
-            const currentBranchList = await this._config.git.getBranchList(undefined, 1);
-            const currentBranch = currentBranchList.length > 0 ? currentBranchList[0].ref : '';
-            
+            const currentBranchList = await this._config.git.getBranchList(
+                undefined,
+                1
+            );
+            const currentBranch =
+                currentBranchList.length > 0 ? currentBranchList[0].ref : '';
+
             // Find default base branch (main, master, develop)
-            const defaultBases = ['origin/main', 'origin/master', 'origin/develop', 'main', 'master', 'develop'];
-            let defaultBase = defaultBases.find(base => branches.includes(base));
-            
+            const defaultBases = [
+                'origin/main',
+                'origin/master',
+                'origin/develop',
+                'main',
+                'master',
+                'develop',
+            ];
+            let defaultBase = defaultBases.find((base) =>
+                branches.includes(base)
+            );
+
             if (!defaultBase && branches.length > 0) {
                 defaultBase = branches[0];
             }
@@ -114,13 +186,13 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                 type: 'branchesLoaded',
                 branches: branches,
                 currentBranch: currentBranch,
-                defaultBase: defaultBase
+                defaultBase: defaultBase,
             });
         } catch (error) {
             console.error('Error getting branches:', error);
             this._view?.webview.postMessage({
                 type: 'error',
-                message: 'Failed to load branches'
+                message: 'Failed to load branches',
             });
         }
     }
@@ -131,25 +203,30 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
         }
 
         try {
-            const branchList = await this._config.git.getBranchList(undefined, 50);
-            const branches = branchList.map(b => b.ref).filter(ref => typeof ref === 'string');
-            
+            const branchList = await this._config.git.getBranchList(
+                undefined,
+                50
+            );
+            const branches = branchList
+                .map((b) => b.ref)
+                .filter((ref) => typeof ref === 'string');
+
             const selectedBranch = await vscode.window.showQuickPick(branches, {
                 placeHolder: 'Select base branch...',
-                title: 'Base Branch Selection'
+                title: 'Base Branch Selection',
             });
 
             if (selectedBranch) {
                 this._view?.webview.postMessage({
                     type: 'baseBranchSelected',
-                    branch: selectedBranch
+                    branch: selectedBranch,
                 });
             }
         } catch (error) {
             console.error('Error selecting base branch:', error);
             this._view?.webview.postMessage({
                 type: 'error',
-                message: 'Failed to select base branch'
+                message: 'Failed to select base branch',
             });
         }
     }
@@ -160,72 +237,91 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
         }
 
         try {
-            const branchList = await this._config.git.getBranchList(undefined, 50);
-            const branches = branchList.map(b => b.ref).filter(ref => typeof ref === 'string');
-            
+            const branchList = await this._config.git.getBranchList(
+                undefined,
+                50
+            );
+            const branches = branchList
+                .map((b) => b.ref)
+                .filter((ref) => typeof ref === 'string');
+
             const selectedBranch = await vscode.window.showQuickPick(branches, {
                 placeHolder: 'Select target branch...',
-                title: 'Target Branch Selection'
+                title: 'Target Branch Selection',
             });
 
             if (selectedBranch) {
                 this._view?.webview.postMessage({
                     type: 'targetBranchSelected',
-                    branch: selectedBranch
+                    branch: selectedBranch,
                 });
             }
         } catch (error) {
             console.error('Error selecting target branch:', error);
             this._view?.webview.postMessage({
                 type: 'error',
-                message: 'Failed to select target branch'
+                message: 'Failed to select target branch',
             });
         }
     }
 
-    private async _getFilesList(targetBranch: string, baseBranch: string, _reviewType: 'committed' | 'all') {
+    private async _getFilesList(
+        targetBranch: string,
+        baseBranch: string,
+        _reviewType: 'committed' | 'all'
+    ) {
         // Suppress unused parameter warning
         void _reviewType;
-        
+
         if (!this._config) {
             this._config = await getConfig();
         }
 
         try {
-            const scope: ReviewScope = await this._config.git.getReviewScope(targetBranch, baseBranch);
+            const scope: ReviewScope = await this._config.git.getReviewScope(
+                targetBranch,
+                baseBranch
+            );
             const changedFiles = await this._config.git.getChangedFiles(scope);
-            
+
             this._view?.webview.postMessage({
                 type: 'filesListLoaded',
-                files: changedFiles.map(file => ({
+                files: changedFiles.map((file) => ({
                     name: file.file,
                     status: file.status,
-                    from: file.from
+                    from: file.from,
                 })),
                 baseBranch,
-                targetBranch
+                targetBranch,
             });
         } catch (error) {
             console.error('Error getting files list:', error);
             this._view?.webview.postMessage({
                 type: 'error',
-                message: 'Failed to load files list'
+                message: 'Failed to load files list',
             });
         }
     }
 
-    private async _reviewChanges(targetBranch: string, baseBranch: string, reviewType: 'committed' | 'all') {
+    private async _reviewChanges(
+        targetBranch: string,
+        baseBranch: string,
+        reviewType: 'committed' | 'all'
+    ) {
         if (!this._config) {
             this._config = await getConfig();
         }
 
         try {
             this._view?.webview.postMessage({
-                type: 'reviewStarted'
+                type: 'reviewStarted',
             });
 
-            const scope: ReviewScope = await this._config.git.getReviewScope(targetBranch, baseBranch);
-            
+            const scope: ReviewScope = await this._config.git.getReviewScope(
+                targetBranch,
+                baseBranch
+            );
+
             if (reviewType === 'all') {
                 // Include uncommitted changes
                 // This would need additional implementation in the git utils
@@ -239,62 +335,69 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                     if (message && message !== progress.lastMessage) {
                         this._view?.webview.postMessage({
                             type: 'reviewProgress',
-                            message: message
+                            message: message,
                         });
                         progress.lastMessage = message;
                     }
                 },
             };
 
-            const result = await reviewDiff(this._config, reviewRequest, progress, new vscode.CancellationTokenSource().token);
-            
+            const result = await reviewDiff(
+                this._config,
+                reviewRequest,
+                progress,
+                new vscode.CancellationTokenSource().token
+            );
+
             // Filter comments by severity and send progressive updates
             const options = this._config.getOptions();
             const filteredResults: FileComments[] = [];
-            
+
             // Store all comments for navigation
             this._allComments = [];
-            
+
             // Add a delay between file results to simulate progressive updates
             for (let index = 0; index < result.fileComments.length; index++) {
                 const file = result.fileComments[index];
                 const filteredFile = {
                     ...file,
-                    comments: file.comments.filter(comment => 
-                        comment.severity >= options.minSeverity && comment.line > 0
-                    )
+                    comments: file.comments.filter(
+                        (comment) =>
+                            comment.severity >= options.minSeverity &&
+                            comment.line > 0
+                    ),
                 };
-                
+
                 if (filteredFile.comments.length > 0) {
                     filteredResults.push(filteredFile);
-                    
+
                     // Add comments to navigation array
-                    filteredFile.comments.forEach(comment => {
+                    filteredFile.comments.forEach((comment) => {
                         this._allComments.push({
                             filePath: file.target,
                             line: comment.line,
                             comment: comment.comment,
-                            proposedAdjustment: comment.proposedAdjustment
+                            proposedAdjustment: comment.proposedAdjustment,
                         });
                     });
-                    
+
                     // Send individual file result with delay for visual effect
                     this._view?.webview.postMessage({
                         type: 'fileReviewCompleted',
-                        fileResult: filteredFile
+                        fileResult: filteredFile,
                     });
-                    
+
                     // Add a small delay to make the progressive effect visible
-                    await new Promise(resolve => setTimeout(resolve, 300));
+                    await new Promise((resolve) => setTimeout(resolve, 300));
                 }
-                
+
                 // Send progress update
                 this._view?.webview.postMessage({
                     type: 'reviewProgress',
-                    message: `Processed ${index + 1}/${result.fileComments.length} files...`
+                    message: `Processed ${index + 1}/${result.fileComments.length} files...`,
                 });
             }
-            
+
             this._currentCommentIndex = -1;
 
             // Hide status bar when no comments
@@ -305,32 +408,53 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             this._view?.webview.postMessage({
                 type: 'reviewCompleted',
                 results: filteredResults,
-                errors: result.errors
+                errors: result.errors,
             });
-
         } catch (error) {
             console.error('Error during review:', error);
             this._view?.webview.postMessage({
                 type: 'reviewError',
-                message: error instanceof Error ? error.message : 'Unknown error occurred'
+                message:
+                    error instanceof Error
+                        ? error.message
+                        : 'Unknown error occurred',
             });
         }
     }
 
-    private async _openFileWithComment(filePath: string, line: number, comment: string) {
-        console.log('_openFileWithComment called with:', { filePath, line, comment });
-        
+    private async _openFileWithComment(
+        filePath: string,
+        line: number,
+        comment: string
+    ) {
+        console.log('_openFileWithComment called with:', {
+            filePath,
+            line,
+            comment,
+        });
+
         // Find and set current comment index
-        this._currentCommentIndex = this._allComments.findIndex(c => 
-            c.filePath === filePath && c.line === line && c.comment === comment
+        this._currentCommentIndex = this._allComments.findIndex(
+            (c) =>
+                c.filePath === filePath &&
+                c.line === line &&
+                c.comment === comment
         );
-        
+
         await this._showCommentAtIndex(this._currentCommentIndex);
     }
 
-    private async _openFileDiff(filePath: string, baseBranch: string, targetBranch: string) {
-        console.log('_openFileDiff called with:', { filePath, baseBranch, targetBranch });
-        
+    private async _openFileDiff(
+        filePath: string,
+        baseBranch: string,
+        targetBranch: string
+    ) {
+        console.log('_openFileDiff called with:', {
+            filePath,
+            baseBranch,
+            targetBranch,
+        });
+
         if (!this._config) {
             this._config = await getConfig();
         }
@@ -340,52 +464,73 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             const gitRoot = this._config.git.getGitRoot();
             const absolutePath = path.join(gitRoot, filePath);
             const fileName = path.basename(filePath);
-            
-            console.log('Opening diff for file:', { 
-                filePath, 
-                baseBranch, 
+
+            console.log('Opening diff for file:', {
+                filePath,
+                baseBranch,
                 targetBranch,
-                absolutePath
+                absolutePath,
             });
 
             // Use the Git extension's compare command which is more reliable
             // Skip the git commands that might not work as expected and go straight to manual diff
-            console.log('Skipping git extension commands, going directly to manual diff creation...');
+            console.log(
+                'Skipping git extension commands, going directly to manual diff creation...'
+            );
 
             // Final fallback: Create a custom diff using git show command
             console.log('Attempting manual diff creation...');
-            const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(gitRoot));
+            const workspaceFolder = vscode.workspace.getWorkspaceFolder(
+                vscode.Uri.file(gitRoot)
+            );
             if (!workspaceFolder) {
-                throw new Error('Could not find workspace folder for git repository');
+                throw new Error(
+                    'Could not find workspace folder for git repository'
+                );
             }
 
             // Get the file content from the base branch using git show
-            const relativeFilePath = path.relative(gitRoot, absolutePath).replace(/\\/g, '/');
+            const relativeFilePath = path
+                .relative(gitRoot, absolutePath)
+                .replace(/\\/g, '/');
             console.log('Using relative file path:', relativeFilePath);
-            
+
             // Create a temporary document with the base branch content
             let baseContent: string;
             try {
-                console.log('Executing git show command:', `${baseBranch}:${relativeFilePath}`);
+                console.log(
+                    'Executing git show command:',
+                    `${baseBranch}:${relativeFilePath}`
+                );
                 // Use the raw git command to get file content from the base branch
-                const gitShowResult = await this._config.git.raw(['show', `${baseBranch}:${relativeFilePath}`]);
+                const gitShowResult = await this._config.git.raw([
+                    'show',
+                    `${baseBranch}:${relativeFilePath}`,
+                ]);
                 baseContent = gitShowResult;
-                console.log('Git show succeeded, content length:', baseContent.length);
+                console.log(
+                    'Git show succeeded, content length:',
+                    baseContent.length
+                );
             } catch (gitError) {
                 console.error('Failed to get file content from git:', gitError);
-                throw new Error(`Could not retrieve file content from ${baseBranch}: ${gitError instanceof Error ? gitError.message : 'Unknown error'}`);
+                throw new Error(
+                    `Could not retrieve file content from ${baseBranch}: ${gitError instanceof Error ? gitError.message : 'Unknown error'}`
+                );
             }
-            
-            // Create a virtual document for the base version  
+
+            // Create a virtual document for the base version
             console.log('Creating virtual document for base version...');
             const baseDocument = await vscode.workspace.openTextDocument({
                 content: baseContent,
-                language: this._getLanguageFromFileName(fileName)
+                language: this._getLanguageFromFileName(fileName),
             });
 
             // Open the current version
             console.log('Opening current version document...');
-            const currentDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(absolutePath));
+            const currentDocument = await vscode.workspace.openTextDocument(
+                vscode.Uri.file(absolutePath)
+            );
 
             // Open the diff view
             const title = `${fileName} (${baseBranch} ↔ ${targetBranch})`;
@@ -398,58 +543,76 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                 { preview: false }
             );
             console.log('Diff view opened successfully');
-
         } catch (error) {
             console.error('Error opening file diff:', error);
-            
+
             // Ultimate fallback: try to open both files side by side
             try {
-                console.log('Attempting fallback: opening files side by side...');
-                
+                console.log(
+                    'Attempting fallback: opening files side by side...'
+                );
+
                 // First, try to create a temp file with the base branch content
                 const gitRoot = this._config.git.getGitRoot();
                 const absolutePath = path.join(gitRoot, filePath);
-                const relativeFilePath = path.relative(gitRoot, absolutePath).replace(/\\/g, '/');
-                
+                const relativeFilePath = path
+                    .relative(gitRoot, absolutePath)
+                    .replace(/\\/g, '/');
+
                 try {
-                    const baseContent = await this._config.git.raw(['show', `${baseBranch}:${relativeFilePath}`]);
+                    const baseContent = await this._config.git.raw([
+                        'show',
+                        `${baseBranch}:${relativeFilePath}`,
+                    ]);
                     const fileName = path.basename(filePath);
-                    
+
                     // Create virtual document for base version
-                    const baseDocument = await vscode.workspace.openTextDocument({
-                        content: baseContent,
-                        language: this._getLanguageFromFileName(fileName)
-                    });
-                    
+                    const baseDocument =
+                        await vscode.workspace.openTextDocument({
+                            content: baseContent,
+                            language: this._getLanguageFromFileName(fileName),
+                        });
+
                     // Open base version first
-                    await vscode.window.showTextDocument(baseDocument, { 
+                    await vscode.window.showTextDocument(baseDocument, {
                         viewColumn: vscode.ViewColumn.One,
-                        preview: false 
+                        preview: false,
                     });
-                    
+
                     // Open current version in second column
-                    const currentDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(absolutePath));
-                    await vscode.window.showTextDocument(currentDocument, { 
+                    const currentDocument =
+                        await vscode.workspace.openTextDocument(
+                            vscode.Uri.file(absolutePath)
+                        );
+                    await vscode.window.showTextDocument(currentDocument, {
                         viewColumn: vscode.ViewColumn.Two,
-                        preview: false 
+                        preview: false,
                     });
-                    
-                    vscode.window.showInformationMessage(`Opened ${fileName} comparison: ${baseBranch} (left) vs ${targetBranch} (right)`);
+
+                    vscode.window.showInformationMessage(
+                        `Opened ${fileName} comparison: ${baseBranch} (left) vs ${targetBranch} (right)`
+                    );
                     return;
-                    
                 } catch (gitFallbackError) {
-                    console.error('Git fallback also failed:', gitFallbackError);
+                    console.error(
+                        'Git fallback also failed:',
+                        gitFallbackError
+                    );
                     // Just open the current file if everything else fails
                     const uri = vscode.Uri.file(absolutePath);
-                    const document = await vscode.workspace.openTextDocument(uri);
+                    const document =
+                        await vscode.workspace.openTextDocument(uri);
                     await vscode.window.showTextDocument(document);
-                    
-                    vscode.window.showWarningMessage(`Could not compare versions, opened current file instead. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+                    vscode.window.showWarningMessage(
+                        `Could not compare versions, opened current file instead. Error: ${error instanceof Error ? error.message : 'Unknown error'}`
+                    );
                 }
-                
             } catch (fallbackError) {
                 console.error('All fallback attempts failed:', fallbackError);
-                vscode.window.showErrorMessage(`Failed to open file: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`);
+                vscode.window.showErrorMessage(
+                    `Failed to open file: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`
+                );
             }
         }
     }
@@ -487,23 +650,27 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             '.sh': 'shellscript',
             '.bash': 'shellscript',
             '.ps1': 'powershell',
-            '.dockerfile': 'dockerfile'
+            '.dockerfile': 'dockerfile',
         };
         return languageMap[ext] || 'plaintext';
     }
 
     private async _navigateToComment(direction: 'next' | 'previous') {
         if (this._allComments.length === 0) {
-            vscode.window.showInformationMessage('No comments available for navigation');
+            vscode.window.showInformationMessage(
+                'No comments available for navigation'
+            );
             return;
         }
 
         if (direction === 'next') {
-            this._currentCommentIndex = (this._currentCommentIndex + 1) % this._allComments.length;
+            this._currentCommentIndex =
+                (this._currentCommentIndex + 1) % this._allComments.length;
         } else {
-            this._currentCommentIndex = this._currentCommentIndex <= 0 
-                ? this._allComments.length - 1 
-                : this._currentCommentIndex - 1;
+            this._currentCommentIndex =
+                this._currentCommentIndex <= 0
+                    ? this._allComments.length - 1
+                    : this._currentCommentIndex - 1;
         }
 
         await this._showCommentAtIndex(this._currentCommentIndex);
@@ -515,86 +682,120 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
         }
 
         const commentData = this._allComments[index];
-        
+
         if (!this._config) {
             this._config = await getConfig();
         }
 
         try {
             // Clear existing comment threads
-            this._commentThreads.forEach(thread => thread.dispose());
+            this._commentThreads.forEach((thread) => thread.dispose());
             this._commentThreads = [];
 
             // Convert relative path to absolute path using git root
             const gitRoot = this._config.git.getGitRoot();
             const absolutePath = path.join(gitRoot, commentData.filePath);
-            console.log('Converted path:', { filePath: commentData.filePath, gitRoot, absolutePath });
-            
+            console.log('Converted path:', {
+                filePath: commentData.filePath,
+                gitRoot,
+                absolutePath,
+            });
+
             // Open the file
             const uri = vscode.Uri.file(absolutePath);
             const document = await vscode.workspace.openTextDocument(uri);
             const editor = await vscode.window.showTextDocument(document);
 
             // Navigate to the line
-            const position = new vscode.Position(Math.max(0, commentData.line - 1), 0);
+            const position = new vscode.Position(
+                Math.max(0, commentData.line - 1),
+                0
+            );
             editor.selection = new vscode.Selection(position, position);
-            editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+            editor.revealRange(
+                new vscode.Range(position, position),
+                vscode.TextEditorRevealType.InCenter
+            );
 
             // Create comment thread using Commenting API
             if (!this._commentController) {
-                this._commentController = vscode.comments.createCommentController(
-                    'codeReview-comments',
-                    'codeReview Code Review Comments'
-                );
+                this._commentController =
+                    vscode.comments.createCommentController(
+                        'codeReview-comments',
+                        'codeReview Code Review Comments'
+                    );
             }
 
             // Create a comment thread at the specific line
             const range = new vscode.Range(position, position);
-            const thread = this._commentController.createCommentThread(uri, range, []);
+            const thread = this._commentController.createCommentThread(
+                uri,
+                range,
+                []
+            );
             thread.contextValue = 'codeReview-review';
-            
+
             // Create navigation buttons in markdown
             const currentNum = index + 1;
             const totalNum = this._allComments.length;
-            
+
             // Create a MarkdownString and enable command URIs and HTML
             const markdownBody = new vscode.MarkdownString();
-            markdownBody.appendMarkdown(`**Review Comment (${currentNum}/${totalNum}):**\n\n${commentData.comment}`);
-            
+            markdownBody.appendMarkdown(
+                `**Review Comment (${currentNum}/${totalNum}):**\n\n${commentData.comment}`
+            );
+
             // Add proposed adjustment if available
             if (commentData.proposedAdjustment) {
                 const adjustment = commentData.proposedAdjustment;
-                markdownBody.appendMarkdown(`\n\n---\n\n**📝 Proposed Adjustment:**\n\n${adjustment.description}`);
-                markdownBody.appendMarkdown(`\n\n**Original:**\n\`\`\`\n${adjustment.originalCode}\n\`\`\``);
-                markdownBody.appendMarkdown(`\n\n**Proposed:**\n\`\`\`\n${adjustment.adjustedCode}\n\`\`\``);
-                
+                markdownBody.appendMarkdown(
+                    `\n\n---\n\n**📝 Proposed Adjustment:**\n\n${adjustment.description}`
+                );
+                markdownBody.appendMarkdown(
+                    `\n\n**Original:**\n\`\`\`\n${adjustment.originalCode}\n\`\`\``
+                );
+                markdownBody.appendMarkdown(
+                    `\n\n**Proposed:**\n\`\`\`\n${adjustment.adjustedCode}\n\`\`\``
+                );
+
                 // Create command URI with JSON array format (VS Code standard)
-                const commandArgs = JSON.stringify([{
-                    filePath: commentData.filePath,
-                    originalCode: adjustment.originalCode,
-                    adjustedCode: adjustment.adjustedCode,
-                    startLine: adjustment.startLine,
-                    endLine: adjustment.endLine
-                }]);
-                
-                markdownBody.appendMarkdown(`\n\n[Apply Fix](command:codeReview.applyAdjustment?${encodeURIComponent(commandArgs)})`);
+                const commandArgs = JSON.stringify([
+                    {
+                        filePath: commentData.filePath,
+                        originalCode: adjustment.originalCode,
+                        adjustedCode: adjustment.adjustedCode,
+                        startLine: adjustment.startLine,
+                        endLine: adjustment.endLine,
+                    },
+                ]);
+
+                markdownBody.appendMarkdown(
+                    `\n\n[Apply Fix](command:codeReview.applyAdjustment?${encodeURIComponent(commandArgs)})`
+                );
             }
-            
+
             markdownBody.isTrusted = true; // Allow command URIs
             markdownBody.supportHtml = true; // Allow HTML for better markdown rendering
-            
+
             const comment: vscode.Comment = {
                 body: markdownBody,
                 mode: vscode.CommentMode.Preview,
-                author: { name: 'Github Copilot Code Reviewer', iconPath: vscode.Uri.joinPath(this._extensionUri, 'images/icon.png') },
-                contextValue: 'codeReview-comment'
+                author: {
+                    name: 'Github Copilot Code Reviewer',
+                    iconPath: vscode.Uri.joinPath(
+                        this._extensionUri,
+                        'images/icon.png'
+                    ),
+                },
+                contextValue: 'codeReview-comment',
             };
-            
+
             thread.comments = [comment];
 
             thread.canReply = false;
-            thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
-            
+            thread.collapsibleState =
+                vscode.CommentThreadCollapsibleState.Expanded;
+
             // Store thread for cleanup
             this._commentThreads.push(thread);
 
@@ -605,16 +806,19 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                 this._statusBarItem.command = 'codeReview.nextComment';
                 this._statusBarItem.show();
             }
-
         } catch (error) {
             console.error('Error opening file with comment:', error);
-            vscode.window.showErrorMessage(`Failed to open file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            vscode.window.showErrorMessage(
+                `Failed to open file: ${error instanceof Error ? error.message : 'Unknown error'}`
+            );
         }
     }
 
     public refresh() {
         if (this._view) {
-            this._view.webview.html = this._getHtmlForWebview(this._view.webview);
+            this._view.webview.html = this._getHtmlForWebview(
+                this._view.webview
+            );
         }
     }
 
@@ -628,14 +832,14 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
 
     public dispose() {
         // Clean up comment threads
-        this._commentThreads.forEach(thread => thread.dispose());
+        this._commentThreads.forEach((thread) => thread.dispose());
         this._commentThreads = [];
-        
+
         // Clean up comment controller
         if (this._commentController) {
             this._commentController.dispose();
         }
-        
+
         // Clean up status bar
         if (this._statusBarItem) {
             this._statusBarItem.dispose();
@@ -643,14 +847,16 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
     }
 
     public async displayChatReviewResults(results: ReviewResult) {
-        console.log('displayChatReviewResults called with:', { 
-            hasView: !!this._view, 
+        console.log('displayChatReviewResults called with:', {
+            hasView: !!this._view,
             fileCount: results.fileComments.length,
-            errorCount: results.errors.length 
+            errorCount: results.errors.length,
         });
-        
+
         if (!this._view) {
-            console.error('No webview available for displaying chat review results');
+            console.error(
+                'No webview available for displaying chat review results'
+            );
             return;
         }
 
@@ -664,57 +870,58 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             // Convert ReviewResult to the format expected by the webview
             const options = this._config.getOptions();
             console.log('Using options:', options);
-            
+
             const filteredResults: FileComments[] = [];
-            
+
             // Store all comments for navigation
             this._allComments = [];
-            
+
             for (const file of results.fileComments) {
                 const filteredFile = {
                     ...file,
-                    comments: file.comments.filter((comment: ReviewComment) => 
-                        comment.severity >= options.minSeverity && comment.line > 0
-                    )
+                    comments: file.comments.filter(
+                        (comment: ReviewComment) =>
+                            comment.severity >= options.minSeverity &&
+                            comment.line > 0
+                    ),
                 };
-                
+
                 if (filteredFile.comments.length > 0) {
                     filteredResults.push(filteredFile);
-                    
+
                     // Add comments to navigation array
                     filteredFile.comments.forEach((comment: ReviewComment) => {
                         this._allComments.push({
                             filePath: file.target,
                             line: comment.line,
                             comment: comment.comment,
-                            proposedAdjustment: comment.proposedAdjustment
+                            proposedAdjustment: comment.proposedAdjustment,
                         });
                     });
                 }
             }
-            
-            console.log('Filtered results:', { 
-                totalFiles: filteredResults.length, 
-                totalComments: this._allComments.length 
+
+            console.log('Filtered results:', {
+                totalFiles: filteredResults.length,
+                totalComments: this._allComments.length,
             });
-            
+
             this._currentCommentIndex = -1;
-            
+
             // Send a message to configure the UI for chat review results
             // This will hide all irrelevant sections and show only the results section
 
-            
             // Small delay to ensure the UI is ready
             setTimeout(() => {
                 // Send results to webview
                 console.log('Sending reviewCompleted message to webview');
                 this._view?.webview.postMessage({
-                    type: 'chatReviewDisplaying'
+                    type: 'chatReviewDisplaying',
                 });
                 this._view?.webview.postMessage({
                     type: 'reviewCompleted',
                     results: filteredResults,
-                    errors: results.errors || []
+                    errors: results.errors || [],
                 });
             }, 150);
 
@@ -722,17 +929,25 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             if (this._allComments.length === 0 && this._statusBarItem) {
                 this._statusBarItem.hide();
             }
-
         } catch (error) {
             console.error('Error displaying chat review results:', error);
             this._view.webview.postMessage({
                 type: 'reviewError',
-                message: error instanceof Error ? error.message : 'Unknown error occurred'
+                message:
+                    error instanceof Error
+                        ? error.message
+                        : 'Unknown error occurred',
             });
         }
     }
 
-    private async _applyAdjustment(filePath: string, originalCode: string, adjustedCode: string, startLine?: number, endLine?: number) {
+    private async _applyAdjustment(
+        filePath: string,
+        originalCode: string,
+        adjustedCode: string,
+        startLine?: number,
+        endLine?: number
+    ) {
         try {
             if (!this._config) {
                 this._config = await getConfig();
@@ -741,68 +956,100 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             // Convert relative path to absolute path using git root
             const gitRoot = this._config.git.getGitRoot();
             const absolutePath = path.join(gitRoot, filePath);
-            
+
             // Open the file
             const uri = vscode.Uri.file(absolutePath);
             const document = await vscode.workspace.openTextDocument(uri);
             const editor = await vscode.window.showTextDocument(document);
-            
+
             // Find the location of the original code in the document
             const text = document.getText();
             let targetRange: vscode.Range;
-            
+
             if (startLine !== undefined && endLine !== undefined) {
                 // Use provided line range
-                const start = new vscode.Position(Math.max(0, startLine - 1), 0);
-                const end = new vscode.Position(Math.max(0, endLine - 1), document.lineAt(Math.min(endLine - 1, document.lineCount - 1)).text.length);
+                const start = new vscode.Position(
+                    Math.max(0, startLine - 1),
+                    0
+                );
+                const end = new vscode.Position(
+                    Math.max(0, endLine - 1),
+                    document.lineAt(
+                        Math.min(endLine - 1, document.lineCount - 1)
+                    ).text.length
+                );
                 targetRange = new vscode.Range(start, end);
             } else {
                 // Search for the original code in the document
                 const originalCodeIndex = text.indexOf(originalCode);
                 if (originalCodeIndex === -1) {
-                    vscode.window.showErrorMessage(`Could not find the original code in ${filePath}. The file may have been modified since the review.`);
+                    vscode.window.showErrorMessage(
+                        `Could not find the original code in ${filePath}. The file may have been modified since the review.`
+                    );
                     return;
                 }
-                
+
                 // Convert character index to line/column position
                 const startPos = document.positionAt(originalCodeIndex);
-                const endPos = document.positionAt(originalCodeIndex + originalCode.length);
+                const endPos = document.positionAt(
+                    originalCodeIndex + originalCode.length
+                );
                 targetRange = new vscode.Range(startPos, endPos);
             }
-            
+
             // Apply the edit
             const workspaceEdit = new vscode.WorkspaceEdit();
             workspaceEdit.replace(uri, targetRange, adjustedCode);
-            
+
             const success = await vscode.workspace.applyEdit(workspaceEdit);
-            
+
             if (success) {
-                vscode.window.showInformationMessage(`Applied code adjustment to ${path.basename(filePath)}`);
-                
+                vscode.window.showInformationMessage(
+                    `Applied code adjustment to ${path.basename(filePath)}`
+                );
+
                 // Navigate to the applied change
-                const newEndPos = document.positionAt(targetRange.start.character + adjustedCode.length);
-                editor.selection = new vscode.Selection(targetRange.start, newEndPos);
-                editor.revealRange(new vscode.Range(targetRange.start, newEndPos), vscode.TextEditorRevealType.InCenter);
+                const newEndPos = document.positionAt(
+                    targetRange.start.character + adjustedCode.length
+                );
+                editor.selection = new vscode.Selection(
+                    targetRange.start,
+                    newEndPos
+                );
+                editor.revealRange(
+                    new vscode.Range(targetRange.start, newEndPos),
+                    vscode.TextEditorRevealType.InCenter
+                );
             } else {
-                vscode.window.showErrorMessage(`Failed to apply code adjustment to ${filePath}`);
+                vscode.window.showErrorMessage(
+                    `Failed to apply code adjustment to ${filePath}`
+                );
             }
-            
         } catch (error) {
             console.error('Error applying adjustment:', error);
-            vscode.window.showErrorMessage(`Error applying adjustment: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            vscode.window.showErrorMessage(
+                `Error applying adjustment: ${error instanceof Error ? error.message : 'Unknown error'}`
+            );
         }
     }
 
     // Method to apply the adjustment for the current comment being viewed
     async applyCurrentCommentAdjustment(): Promise<void> {
-        if (this._currentCommentIndex < 0 || this._currentCommentIndex >= this._allComments.length) {
-            vscode.window.showWarningMessage('No current comment with adjustment available');
+        if (
+            this._currentCommentIndex < 0 ||
+            this._currentCommentIndex >= this._allComments.length
+        ) {
+            vscode.window.showWarningMessage(
+                'No current comment with adjustment available'
+            );
             return;
         }
 
         const currentComment = this._allComments[this._currentCommentIndex];
         if (!currentComment.proposedAdjustment) {
-            vscode.window.showWarningMessage('Current comment does not have a proposed adjustment');
+            vscode.window.showWarningMessage(
+                'Current comment does not have a proposed adjustment'
+            );
             return;
         }
 
@@ -812,7 +1059,7 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             originalCode: adjustment.originalCode,
             adjustedCode: adjustment.adjustedCode,
             startLine: adjustment.startLine,
-            endLine: adjustment.endLine
+            endLine: adjustment.endLine,
         });
     }
 
@@ -832,59 +1079,85 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
             // Convert relative path to absolute path using git root
             const gitRoot = this._config.git.getGitRoot();
             const absolutePath = path.join(gitRoot, adjustmentData.filePath);
-            
+
             console.log('Applying adjustment:', {
                 filePath: adjustmentData.filePath,
                 absolutePath,
                 originalCodeLength: adjustmentData.originalCode.length,
                 adjustedCodeLength: adjustmentData.adjustedCode.length,
                 startLine: adjustmentData.startLine,
-                endLine: adjustmentData.endLine
+                endLine: adjustmentData.endLine,
             });
 
-            const document = await vscode.workspace.openTextDocument(absolutePath);
+            const document =
+                await vscode.workspace.openTextDocument(absolutePath);
             const editor = await vscode.window.showTextDocument(document);
 
             let range: vscode.Range;
-            
+
             // Priority 1: Use line range if available
-            if (adjustmentData.startLine !== undefined && adjustmentData.endLine !== undefined) {
+            if (
+                adjustmentData.startLine !== undefined &&
+                adjustmentData.endLine !== undefined
+            ) {
                 console.log('Using line range approach');
                 range = new vscode.Range(
                     Math.max(0, adjustmentData.startLine - 1),
                     0,
-                    Math.max(0, Math.min(adjustmentData.endLine - 1, document.lineCount - 1)),
-                    document.lineAt(Math.min(adjustmentData.endLine - 1, document.lineCount - 1)).text.length
+                    Math.max(
+                        0,
+                        Math.min(
+                            adjustmentData.endLine - 1,
+                            document.lineCount - 1
+                        )
+                    ),
+                    document.lineAt(
+                        Math.min(
+                            adjustmentData.endLine - 1,
+                            document.lineCount - 1
+                        )
+                    ).text.length
                 );
             } else {
                 // Priority 2: Try exact string match
                 console.log('Trying exact string match');
                 const text = document.getText();
                 let originalIndex = text.indexOf(adjustmentData.originalCode);
-                
+
                 if (originalIndex === -1) {
                     console.log('Exact match failed, trying normalized search');
                     // Priority 3: Try normalized string matching (ignore whitespace differences)
-                    const normalizeCode = (code: string) => code.replace(/\s+/g, ' ').trim();
-                    const normalizedOriginal = normalizeCode(adjustmentData.originalCode);
+                    const normalizeCode = (code: string) =>
+                        code.replace(/\s+/g, ' ').trim();
+                    const normalizedOriginal = normalizeCode(
+                        adjustmentData.originalCode
+                    );
                     const normalizedText = normalizeCode(text);
-                    
-                    const normalizedIndex = normalizedText.indexOf(normalizedOriginal);
+
+                    const normalizedIndex =
+                        normalizedText.indexOf(normalizedOriginal);
                     if (normalizedIndex !== -1) {
                         // Find the actual position by counting characters with original spacing
                         let actualIndex = 0;
                         let normalizedPos = 0;
-                        for (let i = 0; i < text.length && normalizedPos < normalizedIndex; i++) {
+                        for (
+                            let i = 0;
+                            i < text.length && normalizedPos < normalizedIndex;
+                            i++
+                        ) {
                             if (!/\s/.test(text[i])) {
                                 normalizedPos++;
                             }
                             actualIndex = i + 1;
                         }
                         originalIndex = actualIndex;
-                        console.log('Found using normalized matching at index:', originalIndex);
+                        console.log(
+                            'Found using normalized matching at index:',
+                            originalIndex
+                        );
                     }
                 }
-                
+
                 if (originalIndex === -1) {
                     // Priority 4: Show user a selection dialog for manual selection
                     const choice = await vscode.window.showErrorMessage(
@@ -892,11 +1165,13 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                         'Select Manually',
                         'Cancel'
                     );
-                    
+
                     if (choice === 'Select Manually') {
                         const selection = editor.selection;
                         if (selection.isEmpty) {
-                            vscode.window.showInformationMessage('Please select the code you want to replace and try again.');
+                            vscode.window.showInformationMessage(
+                                'Please select the code you want to replace and try again.'
+                            );
                             return;
                         }
                         range = selection;
@@ -905,7 +1180,9 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                     }
                 } else {
                     const startPos = document.positionAt(originalIndex);
-                    const endPos = document.positionAt(originalIndex + adjustmentData.originalCode.length);
+                    const endPos = document.positionAt(
+                        originalIndex + adjustmentData.originalCode.length
+                    );
                     range = new vscode.Range(startPos, endPos);
                 }
             }
@@ -914,37 +1191,56 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                 startLine: range.start.line,
                 startChar: range.start.character,
                 endLine: range.end.line,
-                endChar: range.end.character
+                endChar: range.end.character,
             });
 
-            const success = await editor.edit(editBuilder => {
+            const success = await editor.edit((editBuilder) => {
                 editBuilder.replace(range, adjustmentData.adjustedCode);
             });
 
             if (success) {
-                vscode.window.showInformationMessage('Code adjustment applied successfully!');
-                
+                vscode.window.showInformationMessage(
+                    'Code adjustment applied successfully!'
+                );
+
                 // Navigate to the applied change
                 const newEndPos = document.positionAt(
-                    document.offsetAt(range.start) + adjustmentData.adjustedCode.length
+                    document.offsetAt(range.start) +
+                        adjustmentData.adjustedCode.length
                 );
                 editor.selection = new vscode.Selection(range.start, newEndPos);
-                editor.revealRange(new vscode.Range(range.start, newEndPos), vscode.TextEditorRevealType.InCenter);
+                editor.revealRange(
+                    new vscode.Range(range.start, newEndPos),
+                    vscode.TextEditorRevealType.InCenter
+                );
             } else {
-                vscode.window.showErrorMessage('Failed to apply the code adjustment.');
+                vscode.window.showErrorMessage(
+                    'Failed to apply the code adjustment.'
+                );
             }
         } catch (error) {
             console.error('Error in applyAdjustment:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            vscode.window.showErrorMessage(`Failed to apply adjustment: ${errorMessage}`);
+            const errorMessage =
+                error instanceof Error ? error.message : 'Unknown error';
+            vscode.window.showErrorMessage(
+                `Failed to apply adjustment: ${errorMessage}`
+            );
         }
     }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
-        const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js'));
-        const styleResetUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'reset.css'));
-        const styleVSCodeUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'vscode.css'));
-        const styleMainUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.css'));
+        const scriptUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js')
+        );
+        const styleResetUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'reset.css')
+        );
+        const styleVSCodeUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'vscode.css')
+        );
+        const styleMainUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'main.css')
+        );
 
         const nonce = getNonce();
 
@@ -1106,7 +1402,8 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
 
 function getNonce() {
     let text = '';
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const possible =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     for (let i = 0; i < 32; i++) {
         text += possible.charAt(Math.floor(Math.random() * possible.length));
     }

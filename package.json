@@ -1,5 +1,5 @@
 {
-  "name": "codeReview",
+  "name": "github-copilot-code-reviewer",
   "displayName": "Github Copilot Code Reviewer",
   "description": "Review source code changes in Git using GitHub Copilot",
   "publisher": "jakubkozera",

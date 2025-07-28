@@ -53,8 +53,8 @@ export const responseExample = [
             adjustedCode: '<script src="js/main.js"></script>',
             description: 'Fix the misspelled script tag',
             startLine: 23,
-            endLine: 23
-        }
+            endLine: 23,
+        },
     },
     {
         file: 'src/js/main.js',
@@ -72,9 +72,10 @@ export const responseExample = [
         proposedAdjustment: {
             originalCode: 'const result = eval(userInput);',
             adjustedCode: 'const result = JSON.parse(userInput);',
-            description: 'Replace eval() with safer JSON.parse() for parsing user input',
+            description:
+                'Replace eval() with safer JSON.parse() for parsing user input',
             startLine: 55,
-            endLine: 55
-        }
+            endLine: 55,
+        },
     },
 ];
