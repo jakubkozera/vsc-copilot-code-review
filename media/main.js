@@ -689,45 +689,6 @@
                 }
             });
         });
-
-        // Add click event listeners to apply adjustment buttons
-        const applyButtons = reviewResults.querySelectorAll('.apply-adjustment-btn');
-        applyButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                e.stopPropagation(); // Prevent triggering comment click
-                
-                const filePath = button.getAttribute('data-file-path');
-                const originalCode = button.getAttribute('data-original-code');
-                const adjustedCode = button.getAttribute('data-adjusted-code');
-                const startLine = button.getAttribute('data-start-line');
-                const endLine = button.getAttribute('data-end-line');
-                
-                if (filePath && originalCode && adjustedCode) {
-                    // Send message without confirmation dialog (webview is sandboxed)
-                    const fileName = filePath.split('/').pop() || filePath;
-                    console.log(`Applying adjustment to ${fileName}`);
-                    
-                    const message = {
-                        type: 'applyAdjustment',
-                        filePath: filePath,
-                        originalCode: originalCode,
-                        adjustedCode: adjustedCode
-                    };
-                    
-                    if (startLine) message.startLine = parseInt(startLine, 10);
-                    if (endLine) message.endLine = parseInt(endLine, 10);
-                    
-                    vscode.postMessage(message);
-                    
-                    // Disable button to prevent double-clicks
-                    if (button instanceof HTMLButtonElement) {
-                        button.disabled = true;
-                        button.textContent = 'Applied';
-                        button.style.opacity = '0.6';
-                    }
-                }
-            });
-        });
     }
 
     function showResults(results, errors) {
@@ -759,17 +720,6 @@
                         </svg>
                         Proposed Adjustment
                     </div>
-                    <button class="apply-adjustment-btn" 
-                            data-file-path="${escapeHtml(filePath)}"
-                            data-original-code="${escapeHtml(proposedAdjustment.originalCode)}"
-                            data-adjusted-code="${escapeHtml(proposedAdjustment.adjustedCode)}"
-                            ${proposedAdjustment.startLine ? `data-start-line="${proposedAdjustment.startLine}"` : ''}
-                            ${proposedAdjustment.endLine ? `data-end-line="${proposedAdjustment.endLine}"` : ''}>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="20,6 9,17 4,12"></polyline>
-                        </svg>
-                        Apply
-                    </button>
                 </div>
                 <div class="proposed-adjustment-description">${escapeHtml(proposedAdjustment.description)}</div>
                 <div class="code-diff">

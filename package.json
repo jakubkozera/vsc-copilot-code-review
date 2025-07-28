@@ -219,26 +219,6 @@
           "group": "navigation@3",
           "icon": "$(wand)"
         }
-      ],
-      "comments/comment/title": [
-        {
-          "command": "codeReview.previousComment",
-          "when": "comment == codeReview-comment",
-          "group": "navigation@1",
-          "icon": "$(arrow-left)"
-        },
-        {
-          "command": "codeReview.nextComment", 
-          "when": "comment == codeReview-comment",
-          "group": "navigation@2",
-          "icon": "$(arrow-right)"
-        },
-        {
-          "command": "codeReview.applyCurrentAdjustment",
-          "when": "comment == codeReview-comment",
-          "group": "navigation@3",
-          "icon": "$(wand)"
-        }
       ]
     },
     "keybindings": [
