@@ -3,7 +3,7 @@
   "displayName": "Github Copilot Code Reviewer",
   "description": "Review source code changes in Git using GitHub Copilot",
   "publisher": "jakubkozera",
-  "version": "0.22.0",
+  "version": "0.22.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/jakubkozera/vsc-copilot-code-review"

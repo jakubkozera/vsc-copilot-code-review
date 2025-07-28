@@ -5,4 +5,8 @@
 !CHANGELOG.md
 !images/icon.png
 !images/chat_icon.png
+!media/main.css
+!media/main.js
+!media/reset.css
+!media/vscode.css
 !out/extension.js
