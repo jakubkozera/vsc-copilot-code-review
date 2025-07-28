@@ -45,11 +45,15 @@
         
         // Branch selection
         baseBranchButton?.addEventListener('click', () => {
-            vscode.postMessage({ type: 'selectBaseBranch' });
+            if (!isReviewing) {
+                vscode.postMessage({ type: 'selectBaseBranch' });
+            }
         });
         
         targetBranchButton?.addEventListener('click', () => {
-            vscode.postMessage({ type: 'selectTargetBranch' });
+            if (!isReviewing) {
+                vscode.postMessage({ type: 'selectTargetBranch' });
+            }
         });
 
         // Dropdown functionality
@@ -347,6 +351,32 @@
         });
     }
 
+    function disableBranchSelectors() {
+        if (baseBranchButton) {
+            baseBranchButton.classList.add('disabled');
+            baseBranchButton.style.opacity = '0.6';
+            baseBranchButton.style.cursor = 'not-allowed';
+        }
+        if (targetBranchButton) {
+            targetBranchButton.classList.add('disabled');
+            targetBranchButton.style.opacity = '0.6';
+            targetBranchButton.style.cursor = 'not-allowed';
+        }
+    }
+
+    function enableBranchSelectors() {
+        if (baseBranchButton) {
+            baseBranchButton.classList.remove('disabled');
+            baseBranchButton.style.opacity = '';
+            baseBranchButton.style.cursor = '';
+        }
+        if (targetBranchButton) {
+            targetBranchButton.classList.remove('disabled');
+            targetBranchButton.style.opacity = '';
+            targetBranchButton.style.cursor = '';
+        }
+    }
+
     function handleFilesListLoaded(files, baseBranch, targetBranch) {
         // Don't update UI if we're in chat review mode
         if (isChatReviewMode) {
@@ -450,6 +480,7 @@
         
         isReviewing = true;
         if (mainButton) mainButton.classList.add('disabled');
+        disableBranchSelectors();
         
         previewSection?.classList.add('hidden');
         statusSection?.classList.add('hidden');
@@ -521,6 +552,7 @@
         
         isReviewing = false;
         if (mainButton) mainButton.classList.remove('disabled');
+        enableBranchSelectors();
         
         // Hide spinner
         reviewStatus?.classList.add('hidden');
@@ -549,6 +581,7 @@
     function handleReviewError(message) {
         isReviewing = false;
         if (mainButton) mainButton.classList.remove('disabled');
+        enableBranchSelectors();
         
         reviewStatus?.classList.add('hidden');
         

@@ -134,6 +134,12 @@ body {
     border-color: var(--vscode-focusBorder);
 }
 
+.branch-button.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
 /* Tooltip functionality */
 .branch-button::after {
     content: attr(title);
