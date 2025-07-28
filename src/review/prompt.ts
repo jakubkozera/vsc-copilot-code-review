@@ -48,6 +48,13 @@ export const responseExample = [
         line: 23,
         comment: 'The <script> tag is misspelled as <scirpt>.',
         severity: 4,
+        proposedAdjustment: {
+            originalCode: '<scirpt src="js/main.js"></scirpt>',
+            adjustedCode: '<script src="js/main.js"></script>',
+            description: 'Fix the misspelled script tag',
+            startLine: 23,
+            endLine: 23
+        }
     },
     {
         file: 'src/js/main.js',
@@ -62,5 +69,12 @@ export const responseExample = [
         comment:
             'Using `eval()` with a possibly user-supplied string may result in code injection.',
         severity: 5,
+        proposedAdjustment: {
+            originalCode: 'const result = eval(userInput);',
+            adjustedCode: 'const result = JSON.parse(userInput);',
+            description: 'Replace eval() with safer JSON.parse() for parsing user input',
+            startLine: 55,
+            endLine: 55
+        }
     },
 ];

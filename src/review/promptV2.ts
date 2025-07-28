@@ -51,6 +51,14 @@ Respond with a JSON array of comment objects. Each object should contain:
 - \`line\`: The first affected LINE NUMBER
 - \`comment\`: A string describing the issue
 - \`severity\`: An integer from 1 (likely irrelevant) to 5 (critical)
+- \`proposedAdjustment\` (optional): An object with proposed code changes containing:
+  - \`originalCode\`: The original code block that needs to be changed
+  - \`adjustedCode\`: The proposed code block replacement  
+  - \`description\`: Explanation of the change
+  - \`startLine\` (optional): Start line for the replacement (if different from comment line)
+  - \`endLine\` (optional): End line for the replacement (if different from comment line)
+
+Include \`proposedAdjustment\` when you can provide a specific, actionable code fix for the identified issue.
 </output_format>
 
 <output_example>

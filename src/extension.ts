@@ -6,24 +6,138 @@ import { UncommittedRef } from '@/types/Ref';
 import { ReviewRequest, ReviewScope } from '@/types/ReviewRequest';
 import { ReviewResult } from '@/types/ReviewResult';
 import { parseArguments } from '@/utils/parseArguments';
+import { CodeReviewPanel } from '@/vscode/CodeReviewPanel';
 import { getConfig, toUri } from '@/vscode/config';
 import { ReviewTool } from '@/vscode/ReviewTool';
 import { pickCommit, pickRef, pickRefs } from '@/vscode/ui';
 
 let chatParticipant: vscode.ChatParticipant;
+let codeReviewPanel: CodeReviewPanel;
 
 // called the first time a command is executed
 export function activate(context: vscode.ExtensionContext) {
-    chatParticipant = vscode.chat.createChatParticipant('lgtm', handleChat);
+    chatParticipant = vscode.chat.createChatParticipant('codereview', handleChat);
     chatParticipant.iconPath = vscode.Uri.joinPath(
         context.extensionUri,
         'images/chat_icon.png'
     );
 
+    // Register the Code Review Panel
+    codeReviewPanel = new CodeReviewPanel(context.extensionUri);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(CodeReviewPanel.viewType, codeReviewPanel)
+    );
+    context.subscriptions.push(codeReviewPanel);
+
     context.subscriptions.push(
         vscode.commands.registerCommand(
-            'lgtm.selectChatModel',
+            'codeReview.selectChatModel',
             handleSelectChatModel
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.refreshCodeReview',
+            () => codeReviewPanel.refresh()
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.nextComment',
+            () => codeReviewPanel.navigateToNext()
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.previousComment',
+            () => codeReviewPanel.navigateToPrevious()
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.openCodeReviewPanel',
+            async () => {
+                await vscode.commands.executeCommand('workbench.view.scm');
+                // Focus on the Code Review section if possible
+                await vscode.commands.executeCommand('codeReview.codeReview.focus');
+            }
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.applyCurrentAdjustment',
+            async () => {
+                try {
+                    await codeReviewPanel.applyCurrentCommentAdjustment();
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                    vscode.window.showErrorMessage(`Failed to apply current adjustment: ${errorMessage}`);
+                }
+            }
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'codeReview.applyAdjustment',
+            async (...args: unknown[]) => {
+                try {
+                    console.log('applyAdjustment command called with args:', args);
+                    console.log('Args details:', args.map((arg, i) => `arg${i}: ${typeof arg} = ${String(arg)}`));
+
+                    let adjustmentData: {
+                        filePath: string;
+                        originalCode: string;
+                        adjustedCode: string;
+                        startLine?: number;
+                        endLine?: number;
+                    };
+
+                    // Handle VS Code command URI with JSON array argument
+                    if (args.length === 1 && Array.isArray(args[0]) && args[0].length === 1) {
+                        console.log('Using array format (args[0][0])');
+                        adjustmentData = args[0][0] as typeof adjustmentData;
+                    } else if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
+                        console.log('Using single object argument');
+                        adjustmentData = args[0] as typeof adjustmentData;
+                    } else if (args.length === 1 && typeof args[0] === 'string') {
+                        console.log('Using JSON string argument');
+                        // JSON string argument (from command URI)
+                        const jsonStr = decodeURIComponent(args[0]);
+                        console.log('Decoded JSON string:', jsonStr);
+                        const parsed = JSON.parse(jsonStr) as unknown;
+                        if (Array.isArray(parsed) && parsed.length === 1) {
+                            adjustmentData = parsed[0] as typeof adjustmentData;
+                        } else {
+                            adjustmentData = parsed as typeof adjustmentData;
+                        }
+                    } else if (args.length >= 3 && typeof args[0] === 'string' && typeof args[1] === 'string' && typeof args[2] === 'string') {
+                        console.log('Using separate string arguments');
+                        adjustmentData = {
+                            filePath: decodeURIComponent(args[0]),
+                            originalCode: decodeURIComponent(args[1]),
+                            adjustedCode: decodeURIComponent(args[2]),
+                            startLine: (args[3] && typeof args[3] === 'string') ? parseInt(decodeURIComponent(args[3])) : undefined,
+                            endLine: (args[4] && typeof args[4] === 'string') ? parseInt(decodeURIComponent(args[4])) : undefined
+                        };
+                    } else {
+                        console.error('Invalid argument format - all args:', args);
+                        throw new Error(`Invalid argument format for applyAdjustment command. Received ${args.length} args of types: ${args.map(arg => typeof arg).join(', ')}`);
+                    }
+
+                    console.log('Final adjustmentData:', adjustmentData);
+                    await codeReviewPanel.applyAdjustment(adjustmentData);
+                } catch (error) {
+                    console.error('Error in applyAdjustment command:', error);
+                    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                    vscode.window.showErrorMessage(`Failed to apply adjustment: ${errorMessage}`);
+                }
+            }
         )
     );
 
@@ -60,9 +174,9 @@ async function handleChat(
     ) {
         stream.markdown(
             'Please use one of the following commands:\n' +
-                ' - `@lgtm /review` to review changes between two branches, commits, or tags. You can specify git refs using e.g. `/review develop main`, or omit the second or both arguments to select refs interactively.\n' +
-                ' - `@lgtm /branch` to review changes between two branches\n' +
-                ' - `@lgtm /commit` to review changes in a single commit'
+                ' - `@codeReview /review` to review changes between two branches, commits, or tags. You can specify git refs using e.g. `/review develop main`, or omit the second or both arguments to select refs interactively.\n' +
+                ' - `@codeReview /branch` to review changes between two branches\n' +
+                ' - `@codeReview /commit` to review changes in a single commit'
         );
         return;
     }
@@ -98,6 +212,30 @@ async function handleChat(
         }
     }
     const results = await review(config, reviewRequest, stream, token);
+
+    // Check if there are any problems to show before opening the panel
+    const options = config.getOptions();
+    const filteredResults = results.fileComments.filter(file => {
+        return file.comments.some(comment => 
+            comment.severity >= options.minSeverity && comment.line > 0
+        );
+    });
+    
+    // Only open Source Control panel and show results if there are actual problems
+    if (codeReviewPanel && filteredResults.length > 0) {
+        // Open Source Control panel and show results in the Code Review view
+        await vscode.commands.executeCommand('workbench.view.scm');
+        
+        // Send the results to the Source Control panel
+        await codeReviewPanel.displayChatReviewResults(results);
+        
+        // Send message to indicate results are available in the Source Control panel with a clickable command
+        stream.markdown(`\n\n**Review results are also available in the Source Control panel**\n\n`);
+        stream.button({
+            command: 'codeReview.openCodeReviewPanel',
+            title: 'Open Code Review Panel'
+        });
+    }
 
     showReviewResults(config, results, stream, token);
 }
@@ -296,18 +434,18 @@ async function handleSelectChatModel() {
     });
     const selectedQuickPickItem = await vscode.window.showQuickPick(
         quickPickItems,
-        { placeHolder: 'Select a chat model for LGTM reviews' }
+        { placeHolder: 'Select a chat model for codeReview reviews' }
     );
     if (selectedQuickPickItem) {
         await vscode.workspace
-            .getConfiguration('lgtm')
+            .getConfiguration('codeReview')
             .update(
                 'chatModel',
                 selectedQuickPickItem.id,
                 vscode.ConfigurationTarget.Global
             );
         vscode.window.showInformationMessage(
-            `LGTM chat model set to: ${selectedQuickPickItem.name}`
+            `codeReview chat model set to: ${selectedQuickPickItem.name}`
         );
     }
 }

@@ -1,5 +1,8 @@
 # Change Log
 
+## [0.22.0]
+- Added a web view for Code Review, enabling interactive browsing and commenting on code changes directly within the VS Code extension.
+
 ## [0.21.0]
 - Same as 0.20.1.
 
@@ -16,7 +19,7 @@ Note: If you are using the custom prompt setting to change the comment language,
 - Change default prompt type to v2think.
 
 ## [0.19.1] (pre-release)
-- Add experimental support for prompt variations. To enable, set `lgtm.comparePromptTypes` in your VS Code settings.json to a comma-separated list of prompt types. (v1: current default prompt, v2: integrate best practices, more specific instructions, v2think: v2 with added reasoning step)
+- Add experimental support for prompt variations. To enable, set `codeReview.comparePromptTypes` in your VS Code settings.json to a comma-separated list of prompt types. (v1: current default prompt, v2: integrate best practices, more specific instructions, v2think: v2 with added reasoning step)
 
 ## [0.19.0]
 - Add optional change description argument to #reviewStaged and #reviewUnstaged LM tools. This allows agents to provide additional context and requirements for changes.
@@ -25,10 +28,9 @@ Note: If you are using the custom prompt setting to change the comment language,
 - Add #reviewStaged and #reviewUnstaged tools for use in agent mode.
 
 ## [0.17.2]
-Includes changes from 0.17.0 and 0.17.1.
 Highlight: #review tool to allow usage in agent mode.
 Other changes:
-- Add "Max Input Tokens Fraction" setting to customize how much of the model's token window may be used.
+
 
 ## [0.17.1] (pre-release)
 - Avoid potential initialization errors by loading chat model only on demand and offering fallback options. The configured model will no longer be reset without user interaction.
@@ -48,7 +50,7 @@ Other changes:
 - Many thanks to @dflatline for contributing the 'Select Chat Model' feature!
 
 ## [0.15.0] (pre-release)
-- Add `LGTM: Select Chat Model` command to interactively choose model.
+- Add `codeReview: Select Chat Model` command to interactively choose model.
 
 ## [0.14.1]
 - Same as 0.14.0
@@ -89,12 +91,12 @@ Highlights:
 - Allow cancelling a review from either the progress indicator or the chat side bar
 
 ## [0.12.1] (pre-release)
-- Enable "Lgtm: Merge File Review Requests" by default
+- Enable "codeReview: Merge File Review Requests" by default
 - Merge branches with same ref in branch picker
 - Show initial commit when picking base ref
 
 ## [0.12.0] (pre-release)
-- Add experimental "Lgtm: Merge File Review Requests" setting to provide more complete context to the model and reduce the number of requests
+- Add experimental "codeReview: Merge File Review Requests" setting to provide more complete context to the model and reduce the number of requests
 - Avoid comments with bland positive feedback
 
 ## [0.11.1]
@@ -151,7 +153,7 @@ Highlights:
 - Fix handling of single-line files
 
 ## [0.5.3]
-- Remove '@lgtm' from chat input after each command
+- Remove '@codeReview' from chat input after each command
 
 ## [0.5.2]
 - Fix checking identity of git tags
@@ -184,12 +186,12 @@ Highlights:
 - Make branch/commit selection more user friendly
 
 ## [0.1.2]
-- Add `lgtm.enableDebugOutput` configuration option
+- Add `codeReview.enableDebugOutput` configuration option
 
 ## [0.1.1] (pre-release)
 
 - Add more context to prompt
-- Add `lgtm.minSeverity` configuration option
+- Add `codeReview.minSeverity` configuration option
 - Make AI response parsing more permissive
 
 ## [0.1.0] (pre-release)

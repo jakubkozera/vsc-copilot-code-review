@@ -64,12 +64,53 @@ export function parseComment(comment: unknown): ReviewComment {
         severity = comment.severity;
     }
 
-    return {
+    const result: ReviewComment = {
         file: comment.file,
         comment: comment.comment.trim(),
         line,
         severity,
     };
+
+    // Parse proposed adjustment if it exists
+    if (
+        'proposedAdjustment' in comment &&
+        comment.proposedAdjustment &&
+        typeof comment.proposedAdjustment === 'object'
+    ) {
+        const adjustment = comment.proposedAdjustment;
+        if (
+            'originalCode' in adjustment &&
+            typeof adjustment.originalCode === 'string' &&
+            'adjustedCode' in adjustment &&
+            typeof adjustment.adjustedCode === 'string' &&
+            'description' in adjustment &&
+            typeof adjustment.description === 'string'
+        ) {
+            result.proposedAdjustment = {
+                originalCode: adjustment.originalCode,
+                adjustedCode: adjustment.adjustedCode,
+                description: adjustment.description,
+            };
+
+            // Add optional line range if provided
+            if (
+                'startLine' in adjustment &&
+                typeof adjustment.startLine === 'number' &&
+                adjustment.startLine > 0
+            ) {
+                result.proposedAdjustment.startLine = adjustment.startLine;
+            }
+            if (
+                'endLine' in adjustment &&
+                typeof adjustment.endLine === 'number' &&
+                adjustment.endLine > 0
+            ) {
+                result.proposedAdjustment.endLine = adjustment.endLine;
+            }
+        }
+    }
+
+    return result;
 }
 
 /** Returns comments in descending order of severity */
