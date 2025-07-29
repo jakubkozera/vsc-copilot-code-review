@@ -1,4 +1,4 @@
-![Demo](https://raw.githubusercontent.com/jakubkozera/vsc-copilot-code-review/refs/heads/main/githubcopilot-code-reviewer.gif)
+![Demo](https://raw.githubusercontent.com/jakubkozera/vsc-copilot-code-review/refs/heads/master/githubcopilot-code-reviewer.gif)
 
 # Github Copilot Code Reviewer
 
