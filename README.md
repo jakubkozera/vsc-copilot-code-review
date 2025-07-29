@@ -39,9 +39,6 @@ codeReview will respond with review comments grouped by file and sorted by sever
 - Manage review comments alongside your Git workflow in a unified interface
 
 
-![Demo](./images/demo.gif)
-
-
 ## Features
 
 - **Enhanced Source Control Integration**: Review results appear in a dedicated "Copilot Code Review" tab within the Source Control view, seamlessly integrating with your Git workflow for efficient code review management.
