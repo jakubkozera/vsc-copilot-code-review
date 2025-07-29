@@ -1,3 +1,5 @@
+![Demo](https://raw.githubusercontent.com/jakubkozera/vsc-copilot-code-review/refs/heads/main/githubcopilot-code-reviewer.gif)
+
 # Github Copilot Code Reviewer
 
 [![Latest Release](https://flat.badgen.net/github/release/jakubkozera/vsc-copilot-code-review)](https://github.com/jakubkozera/vsc-copilot-code-review/releases)
