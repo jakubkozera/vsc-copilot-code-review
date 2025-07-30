@@ -1,5 +1,8 @@
 # Change Log
 
+## [0.22.2]
+- Updated readme
+
 ## [0.22.1]
 - Fixed: missing assets for web view added
 
