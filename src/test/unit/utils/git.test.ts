@@ -88,6 +88,13 @@ describe('git', () => {
         expect(git.getGitRoot()).toBe('/git/root');
     });
 
+    it('raw passes arguments to git and returns its output', async () => {
+        vi.mocked(mockSimpleGit.raw).mockResolvedValueOnce('file content');
+
+        expect(await git.raw(['show', 'main:a.ts'])).toBe('file content');
+        expect(mockSimpleGit.raw).toHaveBeenCalledWith(['show', 'main:a.ts']);
+    });
+
     describe('getChangedFiles', () => {
         it('committed', async () => {
             vi.mocked(mockSimpleGit.diffSummary).mockResolvedValue({
