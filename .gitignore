@@ -4,6 +4,8 @@ node_modules
 coverage
 .vscode-test/
 *.vsix
+.codereview-debug/
+tsconfig.tsbuildinfo
 
 images/*
 !images/icon.png

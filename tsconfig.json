@@ -1,20 +1,22 @@
 {
     "compilerOptions": {
-        "module": "Node16",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
         "target": "ES2022",
         "outDir": "out",
-        "lib": ["ES2022"],
+        "lib": ["DOM", "ES2022"],
         "sourceMap": true,
         "rootDir": "src",
         "strict": true,
+        "incremental": true,
         "noImplicitReturns": true,
         "noFallthroughCasesInSwitch": true,
         "noUnusedParameters": true,
         "skipLibCheck": true, // workaround for lru-cache types (can be removed if only lru-cache@11.0.1 is used)
-        "baseUrl": ".",
         "paths": {
-            "@/*": ["src/*"]
-        }
+            "@/*": ["./src/*"]
+        },
+        "types": ["node"]
     },
     "exclude": ["vitest.config.mts"]
 }

@@ -1,12 +1,12 @@
 /// <reference types="vitest" />
 
-import { resolve } from 'path';
+import { resolve } from 'node:path';
 import { coverageConfigDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
     resolve: {
         alias: {
-            '@': resolve(__dirname, './src'),
+            '@': resolve(import.meta.dirname, './src'),
         },
     },
     test: {
@@ -17,12 +17,13 @@ export default defineConfig({
             exclude: [
                 'src/test/**',
                 'src/vscode/**',
+                'src/types/**',
                 'src/extension.ts',
                 ...coverageConfigDefaults.exclude,
             ],
             thresholds: {
-                lines: 94.5,
-                functions: 96.82,
+                lines: 98.86,
+                functions: 98.58,
                 autoUpdate: true,
             },
             reporter: ['text', 'lcov'],

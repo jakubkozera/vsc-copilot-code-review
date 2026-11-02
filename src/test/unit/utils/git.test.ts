@@ -1,11 +1,11 @@
-import simpleGit, {
+import {
     BranchSummary,
-    LogResult,
-    SimpleGit,
-    TagResult,
     type BranchSummaryBranch,
     type DiffResult,
+    LogResult,
+    SimpleGit,
     type StatusResult,
+    simpleGit,
 } from 'simple-git';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,10 +24,10 @@ index 44cbb3f..887431b 100644
 +    <scirpt src="index.js"></scirpt>
  </head>
  <body>
- 
+
 @@ -26,7 +27,7 @@
- 
- 
+
+
      <script>
 -        window['settings'] = {}
 +        window['settings'] = eval("(" + new URLSearchParams(window.location.search).get('settings') + ")");
@@ -37,22 +37,25 @@ index 44cbb3f..887431b 100644
 \\ No newline at end of file
 `;
 
-describe('git', () => {
-    vi.mock('simple-git', () => ({
-        default: vi.fn(),
-    }));
+vi.mock('simple-git', () => ({
+    simpleGit: vi.fn(),
+}));
 
+describe('git', () => {
     const mockSimpleGit = {
         revparse: vi.fn(),
         cwd: vi.fn(),
         log: vi.fn(),
         diff: vi.fn(),
+        show: vi.fn(),
         diffSummary: vi.fn(),
         branch: vi.fn(),
         tags: vi.fn(),
         firstCommit: vi.fn(),
         status: vi.fn(),
         raw: vi.fn(),
+        getRemotes: vi.fn(),
+        checkout: vi.fn(),
     } as unknown as SimpleGit;
 
     const scope: ReviewScope = {
@@ -92,7 +95,7 @@ describe('git', () => {
                     { file: 'file1', status: 'M', from: 'othername' },
                     { file: 'file2' },
                 ],
-            } as unknown as DiffResult);
+            } as DiffResult);
 
             const result = await git.getChangedFiles(scope);
 
@@ -225,30 +228,32 @@ rename to index.html'
 
             const result = await git.getFileDiff(scope, file);
 
-            expect(result).toMatchInlineSnapshot(`
-              "0	diff --git a/index.html b/index.html
-              0	index 44cbb3f..887431b 100644
-              0	--- a/index.html
-              0	+++ b/index.html
-              0	@@ -1,6 +1,7 @@
-              1	 <html>
-              2	 <head>
-              3	     <title>Home</title>
-              4	+    <scirpt src="index.js"></scirpt>
-              5	 </head>
-              6	 <body>
-              7	 
-              0	@@ -26,7 +27,7 @@
-              27	 
-              28	 
-              29	     <script>
-              0	-        window['settings'] = {}
-              30	+        window['settings'] = eval("(" + new URLSearchParams(window.location.search).get('settings') + ")");
-              31	     </script>
-              32	 </body>
-              33	 </html>
-              34	"
-            `);
+            const expected = [
+                '0\tdiff --git a/index.html b/index.html',
+                '0\tindex 44cbb3f..887431b 100644',
+                '0\t--- a/index.html',
+                '0\t+++ b/index.html',
+                '0\t@@ -1,6 +1,7 @@',
+                '1\t <html>',
+                '2\t <head>',
+                '3\t     <title>Home</title>',
+                '4\t+    <scirpt src="index.js"></scirpt>',
+                '5\t </head>',
+                '6\t <body>',
+                ['7', ''].join('\t'),
+                '0\t@@ -26,7 +27,7 @@',
+                ['27', ''].join('\t'),
+                ['28', ''].join('\t'),
+                '29\t     <script>',
+                "0\t-        window['settings'] = {}",
+                '30\t+        window[\'settings\'] = eval("(" + new URLSearchParams(window.location.search).get(\'settings\') + ")");',
+                '31\t     </script>',
+                '32\t </body>',
+                '33\t </html>',
+                ['34', ''].join('\t'),
+            ].join('\n');
+
+            expect(result).toBe(expected);
         });
     });
 
@@ -494,6 +499,88 @@ line3`;
         });
     });
 
+    describe('snapshot helpers', () => {
+        it('returns the merge base with trailing whitespace trimmed', async () => {
+            vi.mocked(mockSimpleGit.raw).mockResolvedValue('abc123\n');
+
+            await expect(git.getMergeBase('base', 'target')).resolves.toBe(
+                'abc123'
+            );
+            expect(mockSimpleGit.raw).toHaveBeenCalledWith([
+                'merge-base',
+                '--',
+                'base',
+                'target',
+            ]);
+        });
+
+        it('returns file content at a ref', async () => {
+            vi.mocked(mockSimpleGit.show).mockResolvedValue('file content');
+
+            await expect(
+                git.getFileContentAtRef('HEAD', 'src/file.ts')
+            ).resolves.toBe('file content');
+            expect(mockSimpleGit.show).toHaveBeenCalledWith([
+                '--textconv',
+                '--no-ext-diff',
+                '--end-of-options',
+                'HEAD:src/file.ts',
+            ]);
+        });
+
+        it('returns file content from the index', async () => {
+            vi.mocked(mockSimpleGit.show).mockResolvedValue('index content');
+
+            await expect(
+                git.getFileContentAtIndex('src/file.ts')
+            ).resolves.toBe('index content');
+            expect(mockSimpleGit.show).toHaveBeenCalledWith([
+                '--textconv',
+                '--no-ext-diff',
+                '--end-of-options',
+                ':src/file.ts',
+            ]);
+        });
+
+        it('returns undefined when a file is missing from the requested object', async () => {
+            vi.mocked(mockSimpleGit.show).mockRejectedValue(
+                new Error('path exists on disk, but not in HEAD')
+            );
+
+            await expect(
+                git.getFileContentAtRef('HEAD', 'missing.ts')
+            ).resolves.toBeUndefined();
+        });
+
+        it('rethrows unexpected git show errors', async () => {
+            const error = new Error('permission denied');
+            vi.mocked(mockSimpleGit.show).mockRejectedValue(error);
+
+            await expect(
+                git.getFileContentAtRef('HEAD', 'src/file.ts')
+            ).rejects.toBe(error);
+        });
+
+        it('does not treat unrelated pathspec errors as missing objects', async () => {
+            const error = new Error(
+                'pathspec magic is not supported by this command'
+            );
+            vi.mocked(mockSimpleGit.show).mockRejectedValue(error);
+
+            await expect(
+                git.getFileContentAtRef('HEAD', 'src/file.ts')
+            ).rejects.toBe(error);
+        });
+
+        it('rethrows non-Error show failures', async () => {
+            vi.mocked(mockSimpleGit.show).mockRejectedValue('bad failure');
+
+            await expect(git.getFileContentAtIndex('src/file.ts')).rejects.toBe(
+                'bad failure'
+            );
+        });
+    });
+
     describe('isBranch', () => {
         beforeEach(() => {
             vi.mocked(mockSimpleGit.branch).mockResolvedValue({
@@ -617,7 +704,7 @@ line3`;
             expect(result.map((ref) => ref.description)).toEqual(['abc1']);
         });
 
-        it('puts current branch first with beforeRef=undefined', async () => {
+        it('puts current branch first with targetRef=undefined', async () => {
             vi.mocked(mockSimpleGit.branch).mockResolvedValue({
                 all: ['branch1', 'branch2'],
                 branches: {
@@ -645,7 +732,7 @@ line3`;
             ]);
         });
 
-        it('does not put current branch first with beforeRef set', async () => {
+        it('does not put current branch first with targetRef set', async () => {
             vi.mocked(mockSimpleGit.branch).mockResolvedValue({
                 all: ['branch1', 'branch2'],
                 branches: {
@@ -678,13 +765,11 @@ line3`;
             ]);
         });
 
-        it('puts common base branches first when beforeRef set', async () => {
+        it('puts origin branch first and sorts by numCommitsBehind when targetRef set', async () => {
             const branches = [
-                'trunk',
-                'master',
                 'main',
-                'develop',
                 'other',
+                'yetanother',
                 'remotes/origin/myfeature',
                 'remotes/origin/other',
                 'remotes/mirror/myfeature',
@@ -701,76 +786,409 @@ line3`;
                 all: branches,
                 branches: branchSummaries,
             } as BranchSummary);
+            // mock for number of commits behind targetRef
+            vi.mocked(mockSimpleGit.raw)
+                .mockResolvedValueOnce('7') // main
+                .mockResolvedValueOnce('2') // other
+                .mockResolvedValueOnce('4') // yetanother
+                .mockResolvedValueOnce('9') // remotes/origin/myfeature
+                .mockResolvedValueOnce('4') // remotes/origin/other
+                .mockResolvedValueOnce('8'); // remotes/mirror/myfeature
 
-            const result = await git.getBranchList('myfeature', 7);
+            const result = await git.getBranchList('myfeature', 5);
 
             const expectedBranches = [
-                'remotes/origin/myfeature',
+                // remote branches for 'myfeature' first (even with higher numCommitsBehind)
                 'remotes/mirror/myfeature',
+                'remotes/origin/myfeature',
+                // sorted by numCommitsBehind asc
+                'other',
+                //  both of these have numCommitsBehind=4, should retain original order
+                'yetanother',
+                'remotes/origin/other',
+                // main is dropped due to maxCount=5
+            ];
+            expect(result.map((ref) => ref.ref)).toEqual(expectedBranches);
+            expect(result[0].description).toContain('(8 commits behind)');
+            expect(result[1].description).toContain('(9 commits behind)');
+            expect(result[2].description).toContain('(2 commits behind)');
+            expect(result[3].description).toContain('(4 commits behind)');
+            expect(result[4].description).toContain('(4 commits behind)');
+        });
+
+        it('uses branch name priority when branches have same numCommitsBehind', async () => {
+            const branches = [
+                'feature1',
+                'feature2',
+                'trunk',
+                'master',
+                'main',
+                'develop',
+                'remotes/origin/myfeature',
+            ];
+            const branchSummaries: Record<string, BranchSummaryBranch> = {};
+            branches.forEach((branch) => {
+                branchSummaries[branch] = {
+                    current: false,
+                    commit: branch,
+                } as BranchSummaryBranch;
+            });
+
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: branches,
+                branches: branchSummaries,
+            } as BranchSummary);
+            // All non-remote branches have same numCommitsBehind (5)
+            vi.mocked(mockSimpleGit.raw)
+                .mockResolvedValueOnce('5') // feature1
+                .mockResolvedValueOnce('5') // feature2
+                .mockResolvedValueOnce('5') // trunk
+                .mockResolvedValueOnce('5') // master
+                .mockResolvedValueOnce('5') // main
+                .mockResolvedValueOnce('5') // develop
+                .mockResolvedValueOnce('1'); // remotes/origin/myfeature
+
+            const result = await git.getBranchList('myfeature', 10);
+
+            const expectedBranches = [
+                // 1) remote for target first
+                'remotes/origin/myfeature',
+                // 2) sorted by #commits behind (all have 5)
+                // 3) then by branch name priority: develop (-8), main (-7), master (-6), trunk (-5), others (0)
                 'develop',
                 'main',
                 'master',
                 'trunk',
-                'other',
+                // 4) feature1 and feature2 retain original order (stable sort)
+                'feature1',
+                'feature2',
             ];
             expect(result.map((ref) => ref.ref)).toEqual(expectedBranches);
-            expect(result.map((ref) => ref.description)).toEqual(
-                expectedBranches.map((branch) => branch.substring(0, 7))
+        });
+
+        it('sorts branches within same commit by name priority', async () => {
+            const branches = ['feature', 'main', 'remotes/origin/myfeature'];
+            const branchSummaries: Record<string, BranchSummaryBranch> = {};
+            // All point to the same commit
+            branches.forEach((branch) => {
+                branchSummaries[branch] = {
+                    current: false,
+                    commit: 'abc123',
+                } as BranchSummaryBranch;
+            });
+
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: branches,
+                branches: branchSummaries,
+            } as BranchSummary);
+            vi.mocked(mockSimpleGit.raw).mockResolvedValueOnce('5'); // abc123
+
+            const result = await git.getBranchList('myfeature', 10);
+
+            // Within the same commit:
+            // 1) remote for target first
+            // 3) then by branch name priority
+            expect(result.map((ref) => ref.ref)).toEqual([
+                'remotes/origin/myfeature',
+            ]);
+            // main and feature are grouped as "Same as:"
+            expect(result[0].extra).toContain('main');
+            expect(result[0].extra).toContain('feature');
+            // main should come before feature in the "Same as" list
+            expect(result[0].extra).toMatch(/main.*feature/);
+        });
+
+        it('prioritizes local branches before remote branches', async () => {
+            const branches = [
+                'feature',
+                'remotes/origin/develop',
+                'remotes/origin/feature',
+                'develop',
+                'main',
+            ];
+            const branchSummaries: Record<string, BranchSummaryBranch> = {};
+            branches.forEach((branch) => {
+                branchSummaries[branch] = {
+                    current: false,
+                    commit: branch,
+                } as BranchSummaryBranch;
+            });
+
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: branches,
+                branches: branchSummaries,
+            } as BranchSummary);
+            // All have same numCommitsBehind
+            vi.mocked(mockSimpleGit.raw).mockResolvedValue('10');
+
+            const result = await git.getBranchList('myfeature', 10);
+
+            const expectedBranches = [
+                // local designated branches
+                'develop',
+                'main',
+                // remote designated branches
+                'remotes/origin/develop',
+                // then other branches, in original order (since same numCommitsBehind)
+                'feature',
+                'remotes/origin/feature',
+            ];
+            expect(result.map((ref) => ref.ref)).toEqual(expectedBranches);
+        });
+
+        it('does not add extra when targetRef is undefined', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['branch1', 'branch2'],
+                branches: {
+                    branch1: {
+                        current: false,
+                        commit: 'abc1',
+                    },
+                    branch2: {
+                        current: false,
+                        commit: 'abc2',
+                    },
+                },
+            } as unknown as BranchSummary);
+
+            const result = await git.getBranchList(undefined, 2);
+
+            expect(result.length).toBe(2);
+            expect(result[0].extra).toBe(undefined);
+            expect(result[1].extra).toBe(undefined);
+
+            expect(mockSimpleGit.raw).not.toHaveBeenCalled();
+        });
+
+        it('calculates numCommitsBehind when targetRef is provided', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['branch1', 'branch2'],
+                branches: {
+                    branch1: {
+                        current: false,
+                        commit: 'abc1',
+                    },
+                    branch2: {
+                        current: false,
+                        commit: 'abc2',
+                    },
+                },
+            } as unknown as BranchSummary);
+
+            vi.mocked(mockSimpleGit.raw)
+                .mockResolvedValueOnce('7') // branch1/abc1 is 7 commits behind targetRef
+                .mockResolvedValueOnce('2'); // branch2/abc2 is 2 commits behind targetRef
+
+            const result = await git.getBranchList('targetRef', 2);
+
+            expect(mockSimpleGit.raw).toHaveBeenCalledWith([
+                'rev-list',
+                '--count',
+                '--end-of-options',
+                'abc1..targetRef',
+            ]);
+            expect(mockSimpleGit.raw).toHaveBeenCalledWith([
+                'rev-list',
+                '--count',
+                '--end-of-options',
+                'abc2..targetRef',
+            ]);
+            expect(result[0].description).toBe('abc2 (2 commits behind)');
+            expect(result[1].description).toBe('abc1 (7 commits behind)');
+        });
+
+        it('filters out detached HEAD from branch list', async () => {
+            // When detached, current is a commit hash not in branches.all
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['abc123def456', 'branch1', 'branch2'],
+                detached: true,
+                current: 'abc123def456',
+                branches: {
+                    branch1: {
+                        current: false,
+                        commit: 'def456',
+                    },
+                    branch2: {
+                        current: false,
+                        commit: 'ghi789',
+                    },
+                },
+            } as unknown as BranchSummary);
+
+            const result = await git.getBranchList(undefined, 3);
+
+            // Should only return branch1 and branch2, detached HEAD is not a branch
+            expect(result.map((ref) => ref.ref)).toEqual([
+                'branch1',
+                'branch2',
+            ]);
+        });
+
+        it('includes all branches when HEAD is not detached', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['branch1', 'branch2'],
+                current: 'branch1',
+                branches: {
+                    branch1: {
+                        current: true,
+                        commit: 'abc123',
+                    },
+                    branch2: {
+                        current: false,
+                        commit: 'def456',
+                    },
+                },
+            } as unknown as BranchSummary);
+
+            const result = await git.getBranchList(undefined, 3);
+
+            // Should return both branches normally
+            expect(result.map((ref) => ref.ref)).toEqual([
+                'branch1',
+                'branch2',
+            ]);
+        });
+    });
+
+    describe('getDetachedHead', () => {
+        it('returns detached HEAD info when HEAD is detached at a commit', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['branch1', 'branch2'],
+                current: 'abc1234', // short hash shown by git branch
+                detached: true,
+                branches: {
+                    branch1: { current: false, commit: 'def456' },
+                    branch2: { current: false, commit: 'ghi789' },
+                },
+            } as unknown as BranchSummary);
+            vi.mocked(mockSimpleGit.revparse).mockResolvedValue(
+                'abc1234567890abcdef'
             );
+
+            const result = await git.getDetachedHead();
+
+            expect(mockSimpleGit.branch).toHaveBeenCalledWith();
+            expect(mockSimpleGit.revparse).toHaveBeenCalledWith(['HEAD']);
+            expect(result).toEqual({
+                ref: 'abc1234567890abcdef',
+                name: 'abc1234',
+                description: '(current)',
+            });
+        });
+
+        it('uses remote branch name as label when detached at a remote branch', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: [],
+                current: 'Quicksaver/feature/model-per-session',
+                detached: true,
+                branches: {},
+            } as unknown as BranchSummary);
+            vi.mocked(mockSimpleGit.revparse).mockResolvedValue(
+                'abc1234567890abcdef'
+            );
+
+            const result = await git.getDetachedHead();
+
+            expect(result).toEqual({
+                ref: 'abc1234567890abcdef',
+                name: 'Quicksaver/feature/model-per-session',
+                description: '(current) abc1234',
+            });
+        });
+
+        it('returns undefined when HEAD is not detached', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['branch1', 'branch2'],
+                current: 'branch1',
+                detached: false,
+                branches: {
+                    branch1: { current: true, commit: 'abc123' },
+                    branch2: { current: false, commit: 'def456' },
+                },
+            } as unknown as BranchSummary);
+
+            const result = await git.getDetachedHead();
+
+            expect(result).toBeUndefined();
+        });
+
+        it('returns undefined when detached is false', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['branch1'],
+                current: undefined,
+                detached: false,
+                branches: {
+                    branch1: { current: false, commit: 'abc123' },
+                },
+            } as unknown as BranchSummary);
+
+            const result = await git.getDetachedHead();
+
+            expect(result).toBeUndefined();
         });
     });
 
     describe('getTagList', () => {
-        it('returns list of tags', async () => {
-            vi.mocked(mockSimpleGit.tags).mockResolvedValue({
-                all: ['tag1', 'tag2'],
-            } as TagResult);
+        it('returns list of tags with descriptions', async () => {
+            vi.mocked(mockSimpleGit.raw).mockResolvedValue(
+                'tag1\tFirst release\ntag2\tSecond release\n'
+            );
 
             const result = await git.getTagList(undefined, 2);
 
-            expect(mockSimpleGit.tags).toHaveBeenCalledWith([
+            expect(mockSimpleGit.raw).toHaveBeenCalledWith([
+                'tag',
+                '--format=%(refname:short)\t%(contents:subject)',
                 '--sort=-creatordate',
             ]);
             expect(result.map((ref) => ref.ref)).toEqual(['tag1', 'tag2']);
             expect(result.map((ref) => ref.description)).toEqual([
-                undefined,
+                'First release',
+                'Second release',
+            ]);
+        });
+
+        it('returns undefined description for lightweight tags', async () => {
+            vi.mocked(mockSimpleGit.raw).mockResolvedValue(
+                'tag1\tAnnotated tag\ntag2\t\n'
+            );
+
+            const result = await git.getTagList(undefined, 2);
+
+            expect(result.map((ref) => ref.ref)).toEqual(['tag1', 'tag2']);
+            expect(result.map((ref) => ref.description)).toEqual([
+                'Annotated tag',
                 undefined,
             ]);
         });
 
         it('returns list of tags before beforeRef', async () => {
-            vi.mocked(mockSimpleGit.tags).mockResolvedValue({
-                all: ['tag1', 'tag2'],
-            } as TagResult);
+            vi.mocked(mockSimpleGit.raw).mockResolvedValue('tag1\t\ntag2\t\n');
 
             const result = await git.getTagList('beforeRef', 2);
 
-            expect(mockSimpleGit.tags).toHaveBeenCalledWith([
+            expect(mockSimpleGit.raw).toHaveBeenCalledWith([
+                'tag',
+                '--format=%(refname:short)\t%(contents:subject)',
                 '--sort=-creatordate',
                 '--no-contains=beforeRef',
             ]);
             expect(result.map((ref) => ref.ref)).toEqual(['tag1', 'tag2']);
-            expect(result.map((ref) => ref.description)).toEqual([
-                undefined,
-                undefined,
-            ]);
         });
 
         it('limits results to maxCount', async () => {
-            vi.mocked(mockSimpleGit.tags).mockResolvedValue({
-                all: ['tag1', 'tag2'],
-            } as TagResult);
+            vi.mocked(mockSimpleGit.raw).mockResolvedValue(
+                'tag1\tFirst\ntag2\tSecond\n'
+            );
 
             const result = await git.getTagList(undefined, 1);
 
             expect(result.map((ref) => ref.ref)).toEqual(['tag1']);
-            expect(result.map((ref) => ref.description)).toEqual([undefined]);
+            expect(result.map((ref) => ref.description)).toEqual(['First']);
         });
 
         it('handles empty list', async () => {
-            vi.mocked(mockSimpleGit.tags).mockResolvedValue({
-                all: [],
-            } as unknown as TagResult);
+            vi.mocked(mockSimpleGit.raw).mockResolvedValue('');
 
             const result = await git.getTagList(undefined, 2);
 
@@ -819,6 +1237,7 @@ line3`;
 
             expect(mockSimpleGit.log).toHaveBeenCalledWith([
                 '--max-count=2',
+                '--end-of-options',
                 'beforeRef^',
             ]);
             expect(result.map((ref) => ref.ref)).toEqual(['hash1', 'hash2']);
@@ -866,6 +1285,414 @@ line3`;
                     ref: UncommittedRef.Unstaged,
                     description: 'Unstaged changes in 2 files',
                 },
+            ]);
+        });
+    });
+
+    describe('getNumCommitsBehindMap', () => {
+        const refs = ['ref1', 'ref2'];
+        it('returns empty map if targetRef is undefined', async () => {
+            const result = await git.getNumCommitsBehindMap(refs, undefined);
+
+            expect(Object.keys(result)).toHaveLength(0);
+            expect(mockSimpleGit.raw).not.toHaveBeenCalled();
+        });
+
+        it('returns map with values when targetRef is provided', async () => {
+            vi.mocked(mockSimpleGit.raw)
+                .mockResolvedValueOnce('7')
+                .mockResolvedValueOnce('999');
+
+            const result = await git.getNumCommitsBehindMap(refs, 'before');
+
+            expect(mockSimpleGit.raw).toHaveBeenCalledWith([
+                'rev-list',
+                '--count',
+                '--end-of-options',
+                'ref1..before',
+            ]);
+            expect(mockSimpleGit.raw).toHaveBeenCalledWith([
+                'rev-list',
+                '--count',
+                '--end-of-options',
+                'ref2..before',
+            ]);
+
+            expect(Object.keys(result)).toHaveLength(2);
+            expect(result.ref1).toBe(7);
+            expect(result.ref2).toBe(999);
+        });
+
+        it('skips values where git.raw call fails', async () => {
+            vi.mocked(mockSimpleGit.raw).mockImplementation(((
+                args: string[]
+            ) => {
+                if (args[3] === 'ref2..before') {
+                    return Promise.resolve('8');
+                }
+                throw new Error();
+            }) as SimpleGit['raw']);
+
+            const result = await git.getNumCommitsBehindMap(refs, 'before');
+
+            expect(Object.keys(result)).toHaveLength(2);
+            expect(result.ref1).toBe(Infinity);
+            expect(result.ref2).toBe(8);
+        });
+
+        it('skips results on timeout ', async () => {
+            const refs = ['a', 'b', 'c'];
+            const timeout = (timeoutMs: number) => () =>
+                new Promise<string>((resolve) =>
+                    setTimeout(() => resolve(timeoutMs.toString()), timeoutMs)
+                );
+            vi.mocked(mockSimpleGit.raw, {
+                partial: true,
+            })
+                .mockImplementationOnce(timeout(200))
+                .mockImplementationOnce(timeout(4))
+                .mockImplementationOnce(timeout(2));
+
+            const result = await git.getNumCommitsBehindMap(refs, 'before', 8);
+
+            expect(Object.keys(result)).toHaveLength(3);
+            expect(result.a).toBe(Infinity);
+            expect(result.b).toBe(4);
+            expect(result.c).toBe(2);
+        });
+    });
+
+    describe('getRemotes', () => {
+        it('returns name & url', async () => {
+            vi.mocked(mockSimpleGit.getRemotes).mockResolvedValue([
+                {
+                    name: 'abc',
+                    refs: {
+                        fetch: 'https://example.com/git.git',
+                        push: 'ignord',
+                    },
+                },
+            ]);
+
+            const result = await git.getRemotes();
+
+            expect(result).toStrictEqual([
+                { name: 'abc', url: 'https://example.com/git.git' },
+            ]);
+        });
+
+        it('handles empty list', async () => {
+            vi.mocked(mockSimpleGit.getRemotes).mockResolvedValue([]);
+
+            const result = await git.getRemotes();
+
+            expect(result).toStrictEqual([]);
+        });
+    });
+
+    describe('getLocalBranchForRemote', () => {
+        it('returns local branch name when it exists at same commit as remote branch', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['feature-branch'],
+            } as BranchSummary);
+            vi.mocked(mockSimpleGit.revparse)
+                .mockResolvedValueOnce('abc123') // local branch commit
+                .mockResolvedValueOnce('abc123'); // remote branch commit
+
+            const result = await git.getLocalBranchForRemote(
+                'origin/feature-branch'
+            );
+
+            expect(mockSimpleGit.branch).toHaveBeenCalledWith([
+                '--list',
+                '--end-of-options',
+                'feature-branch',
+            ]);
+            expect(result).toBe('feature-branch');
+        });
+
+        it('handles remotes/ prefix format', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['feature-branch'],
+            } as BranchSummary);
+            vi.mocked(mockSimpleGit.revparse)
+                .mockResolvedValueOnce('abc123')
+                .mockResolvedValueOnce('abc123');
+
+            const result = await git.getLocalBranchForRemote(
+                'remotes/origin/feature-branch'
+            );
+
+            expect(mockSimpleGit.branch).toHaveBeenCalledWith([
+                '--list',
+                '--end-of-options',
+                'feature-branch',
+            ]);
+            expect(result).toBe('feature-branch');
+        });
+
+        it('returns undefined when local branch does not exist', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: [],
+            } as unknown as BranchSummary);
+
+            const result = await git.getLocalBranchForRemote(
+                'origin/feature-branch'
+            );
+
+            expect(result).toBeUndefined();
+        });
+
+        it('returns undefined when local branch is at different commit', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['feature-branch'],
+            } as BranchSummary);
+            vi.mocked(mockSimpleGit.revparse)
+                .mockResolvedValueOnce('abc123') // local branch commit
+                .mockResolvedValueOnce('def456'); // remote branch commit (different)
+
+            const result = await git.getLocalBranchForRemote(
+                'origin/feature-branch'
+            );
+
+            expect(result).toBeUndefined();
+        });
+
+        it('returns undefined when commit comparison fails', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['feature-branch'],
+            } as BranchSummary);
+            vi.mocked(mockSimpleGit.revparse).mockRejectedValue(
+                new Error('Invalid ref')
+            );
+
+            const result = await git.getLocalBranchForRemote(
+                'origin/feature-branch'
+            );
+
+            expect(result).toBeUndefined();
+        });
+
+        it('returns undefined for non-remote refs', async () => {
+            const result = await git.getLocalBranchForRemote('feature-branch');
+
+            expect(result).toBeUndefined();
+        });
+    });
+
+    describe('checkout', () => {
+        it('calls git checkout with the given ref', async () => {
+            vi.mocked(mockSimpleGit.checkout).mockResolvedValue('');
+
+            await git.checkout('feature-branch');
+
+            expect(mockSimpleGit.checkout).toHaveBeenCalledWith([
+                '--end-of-options',
+                'feature-branch',
+            ]);
+        });
+
+        it('calls git checkout with commit hash', async () => {
+            vi.mocked(mockSimpleGit.checkout).mockResolvedValue('');
+
+            await git.checkout('abc123def456');
+
+            expect(mockSimpleGit.checkout).toHaveBeenCalledWith([
+                '--end-of-options',
+                'abc123def456',
+            ]);
+        });
+    });
+
+    describe('localBranchExists', () => {
+        it('returns true when the branch is listed', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: ['feature-x'],
+            } as BranchSummary);
+
+            expect(await git.localBranchExists('feature-x')).toBe(true);
+            expect(mockSimpleGit.branch).toHaveBeenCalledWith([
+                '--list',
+                '--end-of-options',
+                'feature-x',
+            ]);
+        });
+
+        it('returns false when the branch is not listed', async () => {
+            vi.mocked(mockSimpleGit.branch).mockResolvedValue({
+                all: [],
+            } as unknown as BranchSummary);
+
+            expect(await git.localBranchExists('feature-x')).toBe(false);
+        });
+    });
+
+    describe('checkoutTarget', () => {
+        // Route branch() calls: `--remotes` lists remote-tracking branches
+        // (used by remoteBranchName), otherwise a `--list <name>` local-branch
+        // lookup (getLocalBranchForRemote / localBranchExists).
+        const mockBranch = (opts: {
+            remoteBranches?: string[];
+            localBranches?: string[];
+        }) => {
+            vi.mocked(mockSimpleGit.branch).mockImplementation(((
+                options?: unknown
+            ) => {
+                const args = (options as string[] | undefined) ?? [];
+                const all = args.includes('--remotes')
+                    ? (opts.remoteBranches ?? [])
+                    : (opts.localBranches ?? []);
+                return Promise.resolve({ all } as BranchSummary);
+            }) as typeof mockSimpleGit.branch);
+        };
+
+        it('checks out a local branch/tag/commit as-is', async () => {
+            vi.mocked(mockSimpleGit.checkout).mockResolvedValue('');
+
+            const result = await git.checkoutTarget('feature-x');
+
+            expect(result).toStrictEqual({ ref: 'feature-x', detached: false });
+            expect(mockSimpleGit.checkout).toHaveBeenCalledWith([
+                '--end-of-options',
+                'feature-x',
+            ]);
+        });
+
+        it('treats a slashed ref that is not a remote branch as a local ref', async () => {
+            // e.g. a tag `origin/v1` or a ref like `refs/heads/feature-x`: it
+            // has the shape of a remote branch but isn't an actual one.
+            mockBranch({ remoteBranches: ['origin/main'] });
+            vi.mocked(mockSimpleGit.checkout).mockResolvedValue('');
+
+            for (const ref of ['origin/v1', 'refs/heads/feature-x']) {
+                const result = await git.checkoutTarget(ref);
+
+                expect(result).toStrictEqual({ ref, detached: false });
+                expect(mockSimpleGit.checkout).toHaveBeenCalledWith([
+                    '--end-of-options',
+                    ref,
+                ]);
+            }
+        });
+
+        it('uses an existing local branch at the same commit', async () => {
+            mockBranch({
+                remoteBranches: ['origin/feature-x'],
+                localBranches: ['feature-x'],
+            });
+            vi.mocked(mockSimpleGit.revparse)
+                .mockResolvedValueOnce('abc123') // local commit
+                .mockResolvedValueOnce('abc123'); // remote commit
+            vi.mocked(mockSimpleGit.checkout).mockResolvedValue('');
+
+            const result = await git.checkoutTarget('origin/feature-x');
+
+            expect(result).toStrictEqual({ ref: 'feature-x', detached: false });
+            expect(mockSimpleGit.checkout).toHaveBeenCalledWith([
+                '--end-of-options',
+                'feature-x',
+            ]);
+        });
+
+        it('creates a local branch tracking the chosen remote branch', async () => {
+            mockBranch({
+                remoteBranches: ['origin/feature-x'],
+                localBranches: [],
+            });
+            vi.mocked(mockSimpleGit.checkout).mockResolvedValue('');
+
+            const result = await git.checkoutTarget('origin/feature-x');
+
+            expect(result).toStrictEqual({ ref: 'feature-x', detached: false });
+            expect(mockSimpleGit.checkout).toHaveBeenCalledWith([
+                '-b',
+                'feature-x',
+                '--track',
+                '--end-of-options',
+                'origin/feature-x',
+            ]);
+        });
+
+        it('handles the remotes/ prefix form of a remote branch', async () => {
+            mockBranch({
+                remoteBranches: ['origin/feature-x'],
+                localBranches: [],
+            });
+            vi.mocked(mockSimpleGit.checkout).mockResolvedValue('');
+
+            const result = await git.checkoutTarget('remotes/origin/feature-x');
+
+            expect(result).toStrictEqual({ ref: 'feature-x', detached: false });
+            expect(mockSimpleGit.checkout).toHaveBeenCalledWith([
+                '-b',
+                'feature-x',
+                '--track',
+                '--end-of-options',
+                'remotes/origin/feature-x',
+            ]);
+        });
+
+        it('handles remote branch names containing slashes', async () => {
+            mockBranch({
+                remoteBranches: ['origin/feature/foo'],
+                localBranches: [],
+            });
+            vi.mocked(mockSimpleGit.checkout).mockResolvedValue('');
+
+            const result = await git.checkoutTarget('origin/feature/foo');
+
+            expect(result).toStrictEqual({
+                ref: 'feature/foo',
+                detached: false,
+            });
+            expect(mockSimpleGit.checkout).toHaveBeenCalledWith([
+                '-b',
+                'feature/foo',
+                '--track',
+                '--end-of-options',
+                'origin/feature/foo',
+            ]);
+        });
+
+        it('tracks the named remote even if the branch exists on multiple remotes', async () => {
+            // The ref names the remote explicitly, so there is no ambiguity.
+            mockBranch({
+                remoteBranches: ['origin/feature-x', 'upstream/feature-x'],
+                localBranches: [],
+            });
+            vi.mocked(mockSimpleGit.checkout).mockResolvedValue('');
+
+            const result = await git.checkoutTarget('upstream/feature-x');
+
+            expect(result).toStrictEqual({ ref: 'feature-x', detached: false });
+            expect(mockSimpleGit.checkout).toHaveBeenCalledWith([
+                '-b',
+                'feature-x',
+                '--track',
+                '--end-of-options',
+                'upstream/feature-x',
+            ]);
+        });
+
+        it('checks out detached when a divergent local branch exists', async () => {
+            mockBranch({
+                remoteBranches: ['origin/feature-x'],
+                localBranches: ['feature-x'],
+            });
+            vi.mocked(mockSimpleGit.revparse)
+                .mockResolvedValueOnce('abc123') // local commit
+                .mockResolvedValueOnce('def456'); // remote commit (different)
+            vi.mocked(mockSimpleGit.checkout).mockResolvedValue('');
+
+            const result = await git.checkoutTarget('origin/feature-x');
+
+            expect(result).toStrictEqual({
+                ref: 'origin/feature-x',
+                detached: true,
+            });
+            expect(mockSimpleGit.checkout).toHaveBeenCalledWith([
+                '--end-of-options',
+                'origin/feature-x',
             ]);
         });
     });

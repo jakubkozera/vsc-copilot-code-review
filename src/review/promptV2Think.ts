@@ -1,20 +1,22 @@
-import { reasoningTag, responseExample } from './prompt';
+import type { ReviewContextFile } from '@/types/ReviewContextFile';
+import {
+    buildOptionalPromptContext,
+    reasoningTag,
+    responseExample,
+} from './prompt';
 
 export function createReviewPromptV2Think(
     changeDescription: string | undefined,
     diff: string,
-    customPrompt: string
+    customPrompt: string,
+    contextFiles: ReviewContextFile[]
 ): string {
-    customPrompt = customPrompt.length > 0 ? customPrompt.trim() + '\n' : '';
+    customPrompt = customPrompt.length > 0 ? `${customPrompt.trim()}\n` : '';
 
-    let wrappedChangeDescription = '';
-    if (changeDescription && changeDescription.trim()) {
-        wrappedChangeDescription = `
-Here's the change description for context:
-<change_description>
-${changeDescription.trim()}
-</change_description>`;
-    }
+    const optionalContext = buildOptionalPromptContext(
+        changeDescription,
+        contextFiles
+    );
 
     return `
 You are a senior software engineer tasked with reviewing a pull request. Your goal is to analyze the provided git diff and offer insightful, actionable comments on code issues. Focus on identifying bugs, security vulnerabilities, unreadable code, possible refactorings, and typos while considering the changeset as a whole.
@@ -23,7 +25,7 @@ Here is the git diff to analyze:
 <git_diff>
 ${diff}
 </git_diff>
-${wrappedChangeDescription}
+${optionalContext}
 
 <review_instructions>
 - Analyze the entire git diff provided.
@@ -48,7 +50,7 @@ ${customPrompt}</review_instructions>
 <output_format>
 Respond with a JSON array of comment objects. Each object should contain:
 - \`file\`: The path of the file (from the diff header)
-- \`line\`: The first affected LINE NUMBER
+- \`line\`: The first affected LINE NUMBER (for removed lines, use the next non-removed line; 0 if none)
 - \`comment\`: A string describing the issue
 - \`severity\`: An integer from 1 (likely irrelevant) to 5 (critical)
 - \`proposedAdjustment\` (optional): An object with proposed code changes containing:

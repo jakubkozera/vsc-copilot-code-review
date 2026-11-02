@@ -5,6 +5,9 @@ import { reasoningTag } from './prompt';
 
 /** Parse model response into individual comments  */
 export function parseResponse(response: string): ReviewComment[] {
+    if (response === '') {
+        throw new Error('The model returned an empty response');
+    }
     response = stripReasoning(response);
     const parsedArray = parseAsJsonArray(response);
     const comments: ReviewComment[] = [];
@@ -39,17 +42,18 @@ export function parseComment(comment: unknown): ReviewComment {
         typeof comment.file !== 'string' ||
         !comment.file
     ) {
-        throw new Error('Missing `file` field in ' + JSON.stringify(comment));
+        throw new Error(`Missing \`file\` field in ${JSON.stringify(comment)}`);
     }
     if (!('comment' in comment) || typeof comment.comment !== 'string') {
         throw new Error('Missing `comment` field');
     }
 
-    let line = 1;
+    let line = 0; // fallback to file-level comment in case of invalid values
     if (
         'line' in comment &&
         typeof comment.line === 'number' &&
-        comment.line >= 0 // keep 0 to know if we got invalid values
+        Number.isInteger(comment.line) &&
+        comment.line >= 0
     ) {
         line = comment.line;
     }

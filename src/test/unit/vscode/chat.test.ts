@@ -1,0 +1,1120 @@
+import { describe, expect, it, vi } from 'vitest';
+import type {
+    CancellationToken,
+    ChatResponseStream,
+    LanguageModelChat,
+} from 'vscode';
+import * as vscode from 'vscode';
+import { reviewDiff } from '@/review/review';
+import type { Config } from '@/types/Config';
+import type { FileComments } from '@/types/FileComments';
+import { UncommittedRef } from '@/types/Ref';
+import type { ReviewRequest } from '@/types/ReviewRequest';
+import type { ReviewResult } from '@/types/ReviewResult';
+import {
+    collectAttributedComments,
+    countHiddenComments,
+    createSharedProgress,
+    formatModelReviewError,
+    formatNoProblemsFoundMessage,
+    formatReviewStartMessage,
+    getModelDisplayName,
+    getModelDisplayNames,
+    getReviewRequest,
+    type ModelInfo,
+    type ModelReviewResult,
+    registerChatParticipant,
+    resolveOneModelSpec,
+    runReviewWithModels,
+    suggestClosestModelSpec,
+} from '@/vscode/chat';
+import { getConfig } from '@/vscode/config';
+
+// Mock vscode and other modules imported by chat.ts
+vi.mock('vscode', () => ({
+    lm: { selectChatModels: vi.fn() },
+    window: { showWarningMessage: vi.fn() },
+    chat: { createChatParticipant: vi.fn() },
+    Uri: { joinPath: vi.fn() },
+}));
+vi.mock('@/review/review', () => ({ reviewDiff: vi.fn() }));
+vi.mock('@/vscode/config', () => ({ getConfig: vi.fn() }));
+vi.mock('@/vscode/ui', () => ({
+    pickRef: vi.fn(),
+    pickRefs: vi.fn(),
+    promptToCheckout: vi.fn(),
+}));
+vi.mock('@/vscode/uri', () => ({
+    toCommandLink: vi.fn(),
+    toUri: vi.fn(),
+}));
+
+const mockStream = {
+    markdown: vi.fn(),
+    progress: vi.fn(),
+    anchor: vi.fn(),
+} as unknown as ChatResponseStream;
+
+// Mock review result factory
+function createMockReviewResult(
+    fileComments: FileComments[] = []
+): ReviewResult {
+    return {
+        request: {
+            scope: {
+                target: 'feature',
+                base: 'main',
+                isCommitted: true,
+                isTargetCheckedOut: true,
+            },
+        } as ReviewRequest,
+        files: [{ file: 'test.ts', status: 'M' }],
+        fileComments,
+        errors: [],
+    };
+}
+
+describe('Chat multi-model review', () => {
+    describe('createSharedProgress', () => {
+        it('should deduplicate progress messages', () => {
+            const sharedProgress = createSharedProgress(mockStream);
+
+            // Simulate multiple models reporting the same progress
+            sharedProgress.report({ message: 'Gathering changes...' });
+            sharedProgress.report({ message: 'Gathering changes...' });
+            sharedProgress.report({ message: 'Gathering changes...' });
+            sharedProgress.report({ message: 'Reviewing...' });
+            sharedProgress.report({ message: 'Reviewing...' });
+
+            // Each unique message should only be reported once
+            expect(mockStream.progress).toHaveBeenCalledTimes(2);
+            expect(mockStream.progress).toHaveBeenCalledWith(
+                'Gathering changes...'
+            );
+            expect(mockStream.progress).toHaveBeenCalledWith('Reviewing...');
+        });
+
+        it('should not report empty messages', () => {
+            const sharedProgress = createSharedProgress(mockStream);
+
+            sharedProgress.report({ message: '' });
+            sharedProgress.report({ increment: 10 });
+            sharedProgress.report({ message: 'Reviewing...' });
+
+            expect(mockStream.progress).toHaveBeenCalledTimes(1);
+            expect(mockStream.progress).toHaveBeenCalledWith('Reviewing...');
+        });
+    });
+
+    describe('getReviewRequest', () => {
+        it('should carry context overrides into the review request', async () => {
+            const config = {
+                git: {
+                    getCommitRef: vi.fn().mockResolvedValue('abc1234'),
+                    isUncommitted: vi.fn(() => false),
+                    isValidRefPair: vi.fn(() => true),
+                    getReviewScope: vi.fn().mockResolvedValue({
+                        target: 'feature',
+                        base: 'main',
+                        isCommitted: true,
+                        isTargetCheckedOut: true,
+                        revisionRangeDiff: 'main...feature',
+                        revisionRangeLog: 'main..feature',
+                        changeDescription: 'Changes',
+                    }),
+                },
+            } as unknown as Config;
+
+            const request = await getReviewRequest(
+                config,
+                'context:AGENTS.md context:README.md feature main'
+            );
+
+            expect(request?.contextFilesOverride).toEqual([
+                'AGENTS.md',
+                'README.md',
+            ]);
+        });
+
+        it('should allow disabling context files for one review', async () => {
+            const config = {
+                git: {
+                    getCommitRef: vi.fn().mockResolvedValue('abc1234'),
+                    isUncommitted: vi.fn(() => false),
+                    isValidRefPair: vi.fn(() => true),
+                    getReviewScope: vi.fn().mockResolvedValue({
+                        target: 'feature',
+                        base: 'main',
+                        isCommitted: true,
+                        isTargetCheckedOut: true,
+                        revisionRangeDiff: 'main...feature',
+                        revisionRangeLog: 'main..feature',
+                        changeDescription: 'Changes',
+                    }),
+                },
+            } as unknown as Config;
+
+            const request = await getReviewRequest(
+                config,
+                'context:none feature main'
+            );
+
+            expect(request?.contextFilesOverride).toEqual([]);
+        });
+    });
+
+    describe('separate sections display', () => {
+        it('should display results with model headings when multiple models are used', () => {
+            const results: ModelReviewResult[] = [
+                {
+                    modelId: 'copilot:gpt-4',
+                    modelName: 'GPT-4',
+                    result: createMockReviewResult([
+                        {
+                            target: 'test.ts',
+                            comments: [
+                                {
+                                    file: 'test.ts',
+                                    line: 10,
+                                    comment: 'Issue from GPT-4',
+                                    severity: 3,
+                                },
+                            ],
+                            maxSeverity: 3,
+                        },
+                    ]),
+                },
+                {
+                    modelId: 'copilot:claude-sonnet',
+                    modelName: 'Claude Sonnet',
+                    result: createMockReviewResult([
+                        {
+                            target: 'test.ts',
+                            comments: [
+                                {
+                                    file: 'test.ts',
+                                    line: 20,
+                                    comment: 'Issue from Claude',
+                                    severity: 4,
+                                },
+                            ],
+                            maxSeverity: 4,
+                        },
+                    ]),
+                },
+            ];
+
+            // When there are multiple models, each section should have a heading
+            expect(results.length).toBe(2);
+            expect(results[0].modelName).toBe('GPT-4');
+            expect(results[1].modelName).toBe('Claude Sonnet');
+        });
+
+        it('should not display model headings when single model is used', () => {
+            const results: ModelReviewResult[] = [
+                {
+                    modelId: 'copilot:gpt-4',
+                    modelName: 'GPT-4',
+                    result: createMockReviewResult([
+                        {
+                            target: 'test.ts',
+                            comments: [
+                                {
+                                    file: 'test.ts',
+                                    line: 10,
+                                    comment: 'Issue',
+                                    severity: 3,
+                                },
+                            ],
+                            maxSeverity: 3,
+                        },
+                    ]),
+                },
+            ];
+
+            // Single model should not show headings
+            expect(results.length).toBe(1);
+        });
+    });
+
+    describe('hidden comments', () => {
+        const fileComments: FileComments[] = [
+            {
+                target: 'a.ts',
+                comments: [
+                    { file: 'a.ts', line: 1, comment: 'low', severity: 1 },
+                    { file: 'a.ts', line: 0, comment: 'medium', severity: 3 },
+                ],
+                maxSeverity: 3,
+            },
+            {
+                target: 'b.ts',
+                comments: [
+                    { file: 'b.ts', line: 2, comment: 'low', severity: 2 },
+                ],
+                maxSeverity: 2,
+            },
+        ];
+
+        it('should count comments below minSeverity across files', () => {
+            expect(countHiddenComments(fileComments, 1)).toBe(0);
+            expect(countHiddenComments(fileComments, 2)).toBe(1);
+            expect(countHiddenComments(fileComments, 4)).toBe(3);
+            expect(countHiddenComments([], 4)).toBe(0);
+        });
+
+        it('should only say "No problems found." if nothing is hidden', () => {
+            expect(formatNoProblemsFoundMessage(0, 2)).toBe(
+                'No problems found.'
+            );
+        });
+
+        it('should mention hidden comments and how to show them', () => {
+            expect(formatNoProblemsFoundMessage(1, 2)).toBe(
+                'No problems with severity 2 or higher found. 1 comment with lower severity is hidden, lower the `Code Review: Min Severity` setting to show them.'
+            );
+            expect(formatNoProblemsFoundMessage(3, 4)).toBe(
+                'No problems with severity 4 or higher found. 3 comments with lower severity are hidden, lower the `Code Review: Min Severity` setting to show them.'
+            );
+        });
+    });
+
+    describe('merged with attribution display', () => {
+        it('should keep comments from different models as separate entries', () => {
+            const results: ModelReviewResult[] = [
+                {
+                    modelId: 'copilot:gpt-4',
+                    modelName: 'GPT-4',
+                    result: createMockReviewResult([
+                        {
+                            target: 'test.ts',
+                            comments: [
+                                {
+                                    file: 'test.ts',
+                                    line: 10,
+                                    comment: 'Issue A from GPT-4',
+                                    severity: 3,
+                                },
+                            ],
+                            maxSeverity: 3,
+                        },
+                    ]),
+                },
+                {
+                    modelId: 'copilot:claude-sonnet',
+                    modelName: 'Claude Sonnet',
+                    result: createMockReviewResult([
+                        {
+                            target: 'test.ts',
+                            comments: [
+                                {
+                                    file: 'test.ts',
+                                    line: 20,
+                                    comment: 'Issue B from Claude',
+                                    severity: 4,
+                                },
+                            ],
+                            maxSeverity: 4,
+                        },
+                    ]),
+                },
+            ];
+
+            const grouped = collectAttributedComments(results, 1);
+
+            // Both comments target the same file
+            expect(grouped.size).toBe(1);
+            const comments = grouped.get('test.ts');
+            expect(comments).toHaveLength(2);
+
+            // Sorted by line number
+            expect(comments?.[0].line).toBe(10);
+            expect(comments?.[0].model).toBe('GPT-4');
+            expect(comments?.[1].line).toBe(20);
+            expect(comments?.[1].model).toBe('Claude Sonnet');
+        });
+
+        it('should filter out comments below minSeverity', () => {
+            const results: ModelReviewResult[] = [
+                {
+                    modelId: 'copilot:gpt-4',
+                    modelName: 'GPT-4',
+                    result: createMockReviewResult([
+                        {
+                            target: 'test.ts',
+                            comments: [
+                                {
+                                    file: 'test.ts',
+                                    line: 10,
+                                    comment: 'Low severity issue',
+                                    severity: 1,
+                                },
+                                {
+                                    file: 'test.ts',
+                                    line: 20,
+                                    comment: 'High severity issue',
+                                    severity: 4,
+                                },
+                            ],
+                            maxSeverity: 4,
+                        },
+                    ]),
+                },
+            ];
+
+            const grouped = collectAttributedComments(results, 3);
+            const comments = grouped.get('test.ts');
+            expect(comments).toHaveLength(1);
+            expect(comments?.[0].comment).toBe('High severity issue');
+        });
+
+        it('should keep file-level comments (line 0) and sort them first', () => {
+            const results: ModelReviewResult[] = [
+                {
+                    modelId: 'copilot:gpt-4',
+                    modelName: 'GPT-4',
+                    result: createMockReviewResult([
+                        {
+                            target: 'test.ts',
+                            comments: [
+                                {
+                                    file: 'test.ts',
+                                    line: 5,
+                                    comment: 'Line comment',
+                                    severity: 3,
+                                },
+                                {
+                                    file: 'test.ts',
+                                    line: 0,
+                                    comment: 'File-level comment',
+                                    severity: 3,
+                                },
+                            ],
+                            maxSeverity: 3,
+                        },
+                    ]),
+                },
+            ];
+
+            const grouped = collectAttributedComments(results, 1);
+            const comments = grouped.get('test.ts');
+            expect(comments?.map((c) => c.comment)).toEqual([
+                'File-level comment',
+                'Line comment',
+            ]);
+        });
+
+        it('should group comments by file and sort by line', () => {
+            const results: ModelReviewResult[] = [
+                {
+                    modelId: 'copilot:gpt-4',
+                    modelName: 'GPT-4',
+                    result: createMockReviewResult([
+                        {
+                            target: 'a.ts',
+                            comments: [
+                                {
+                                    file: 'a.ts',
+                                    line: 30,
+                                    comment: 'A30',
+                                    severity: 3,
+                                },
+                                {
+                                    file: 'a.ts',
+                                    line: 10,
+                                    comment: 'A10',
+                                    severity: 3,
+                                },
+                            ],
+                            maxSeverity: 3,
+                        },
+                        {
+                            target: 'b.ts',
+                            comments: [
+                                {
+                                    file: 'b.ts',
+                                    line: 5,
+                                    comment: 'B5',
+                                    severity: 3,
+                                },
+                            ],
+                            maxSeverity: 3,
+                        },
+                    ]),
+                },
+            ];
+
+            const grouped = collectAttributedComments(results, 1);
+            expect(grouped.size).toBe(2);
+
+            const aComments = grouped.get('a.ts');
+            expect(aComments).toHaveLength(2);
+            expect(aComments?.[0].line).toBe(10);
+            expect(aComments?.[1].line).toBe(30);
+
+            const bComments = grouped.get('b.ts');
+            expect(bComments).toHaveLength(1);
+        });
+
+        it('should return empty map when no results', () => {
+            const grouped = collectAttributedComments([], 1);
+            expect(grouped.size).toBe(0);
+        });
+    });
+
+    describe('special review provider resolution', () => {
+        it('should resolve model:copilot-code-review inline', () => {
+            const result = resolveOneModelSpec('copilot-code-review', []);
+
+            expect(result).toEqual({ match: 'copilot-code-review' });
+        });
+
+        it('should display Copilot Code Review by name', () => {
+            expect(getModelDisplayName('copilot-code-review', [])).toBe(
+                'Copilot Code Review'
+            );
+        });
+    });
+
+    describe('model display names', () => {
+        it('should use model ID as fallback when name is unavailable', () => {
+            expect(getModelDisplayName('copilot:gpt-4.1', [])).toBe('gpt-4.1');
+            expect(getModelDisplayName('gpt-4.1', [])).toBe('gpt-4.1');
+            expect(getModelDisplayName('vendor:model-name', [])).toBe(
+                'model-name'
+            );
+        });
+
+        it('should preserve full ID tail for model IDs with multiple colons', () => {
+            expect(getModelDisplayName('vendor:group:sub:model', [])).toBe(
+                'group:sub:model'
+            );
+        });
+
+        it('should map model IDs to display names in order', () => {
+            expect(
+                getModelDisplayNames(
+                    ['copilot:gpt-4.1', 'copilot-code-review', 'missing'],
+                    [
+                        model(
+                            'copilot',
+                            'gpt-4.1',
+                            'GPT 4.1'
+                        ) as LanguageModelChat,
+                    ]
+                )
+            ).toEqual(['GPT 4.1', 'Copilot Code Review', 'missing']);
+        });
+    });
+
+    describe('formatReviewStartMessage', () => {
+        it('should format uncommitted review messages', async () => {
+            const config = {
+                git: { isBranch: vi.fn() },
+            } as unknown as Config;
+            const request = {
+                scope: {
+                    target: UncommittedRef.Staged,
+                    isCommitted: false,
+                    isTargetCheckedOut: true,
+                },
+            } as ReviewRequest;
+
+            await expect(
+                formatReviewStartMessage(config, request, ['GPT 4.1'], 'plain')
+            ).resolves.toBe('Reviewing staged changes using GPT 4.1...');
+        });
+
+        it('should format committed review messages as markdown', async () => {
+            const config = {
+                git: { isBranch: vi.fn().mockResolvedValue(true) },
+            } as unknown as Config;
+            const request = {
+                scope: {
+                    target: 'feature',
+                    base: 'main',
+                    isCommitted: true,
+                    isTargetCheckedOut: true,
+                },
+            } as ReviewRequest;
+
+            await expect(
+                formatReviewStartMessage(
+                    config,
+                    request,
+                    ['GPT 4.1', 'Claude'],
+                    'markdown'
+                )
+            ).resolves.toBe(
+                'Reviewing changes on `feature` compared to `main` using **GPT 4.1**, **Claude**...'
+            );
+        });
+
+        it('should use "at" for non-branch committed targets', async () => {
+            const config = {
+                git: { isBranch: vi.fn().mockResolvedValue(false) },
+            } as unknown as Config;
+            const request = {
+                scope: {
+                    target: 'abc1234',
+                    base: 'main',
+                    isCommitted: true,
+                    isTargetCheckedOut: false,
+                },
+            } as ReviewRequest;
+
+            await expect(
+                formatReviewStartMessage(config, request, ['GPT 4.1'], 'plain')
+            ).resolves.toBe(
+                'Reviewing changes at abc1234 compared to main using GPT 4.1...'
+            );
+        });
+    });
+
+    describe('runReviewWithModels', () => {
+        it('should run reviews for each model and return results', async () => {
+            vi.mocked(reviewDiff).mockImplementation(
+                async (_config, request, options) => ({
+                    ...createMockReviewResult([]),
+                    request,
+                    errors: [],
+                    files: [
+                        {
+                            file: `${options?.providerId ?? 'default'}.ts`,
+                            status: 'M',
+                        },
+                    ],
+                })
+            );
+            const config = {
+                getOptions: vi.fn(() => ({ maxConcurrentModelRequests: 2 })),
+                getModel: vi.fn(),
+                logger: { info: vi.fn() },
+            } as unknown as Config;
+            const request = {
+                scope: {
+                    target: 'feature',
+                    base: 'main',
+                    isCommitted: true,
+                    isTargetCheckedOut: true,
+                },
+            } as ReviewRequest;
+            const progress = { report: vi.fn() };
+            const token = {
+                isCancellationRequested: false,
+            } as CancellationToken;
+
+            const result = await runReviewWithModels(
+                config,
+                request,
+                ['copilot:gpt-4.1', 'copilot:claude'],
+                ['GPT 4.1', 'Claude'],
+                progress,
+                token
+            );
+
+            expect(result.errors).toEqual([]);
+            expect(result.results.map((item) => item.modelName)).toEqual([
+                'GPT 4.1',
+                'Claude',
+            ]);
+            expect(reviewDiff).toHaveBeenCalledTimes(2);
+            expect(reviewDiff).toHaveBeenCalledWith(
+                expect.objectContaining({ getModel: expect.any(Function) }),
+                request,
+                expect.objectContaining({
+                    providerId: 'copilot:gpt-4.1',
+                    progress,
+                    cancellationToken: token,
+                })
+            );
+        });
+
+        it('should return per-model errors without dropping successful results', async () => {
+            const failure = new Error('model failed');
+            vi.mocked(reviewDiff)
+                .mockResolvedValueOnce(createMockReviewResult([]))
+                .mockRejectedValueOnce(failure);
+            const logger = { info: vi.fn() };
+            const config = {
+                getOptions: vi.fn(() => ({ maxConcurrentModelRequests: 1 })),
+                getModel: vi.fn(),
+                logger,
+            } as unknown as Config;
+            const request = {
+                scope: {
+                    target: 'feature',
+                    base: 'main',
+                    isCommitted: true,
+                    isTargetCheckedOut: true,
+                },
+            } as ReviewRequest;
+
+            const result = await runReviewWithModels(
+                config,
+                request,
+                ['copilot:gpt-4.1', 'copilot:claude'],
+                ['GPT 4.1', 'Claude'],
+                { report: vi.fn() },
+                { isCancellationRequested: false } as CancellationToken
+            );
+
+            expect(result.results).toHaveLength(1);
+            expect(result.errors).toEqual([
+                {
+                    modelId: 'copilot:claude',
+                    modelName: 'Claude',
+                    error: failure,
+                },
+            ]);
+            expect(logger.info).toHaveBeenCalledWith(
+                'Model Claude failed:',
+                failure
+            );
+        });
+
+        it('should reject mismatched model IDs and display names', async () => {
+            const config = {
+                getOptions: vi.fn(() => ({ maxConcurrentModelRequests: 1 })),
+                getModel: vi.fn(),
+                logger: { info: vi.fn() },
+            } as unknown as Config;
+            const request = {
+                scope: {
+                    target: 'feature',
+                    base: 'main',
+                    isCommitted: true,
+                    isTargetCheckedOut: true,
+                },
+            } as ReviewRequest;
+
+            await expect(
+                runReviewWithModels(
+                    config,
+                    request,
+                    ['copilot:gpt-4.1', 'copilot:claude'],
+                    ['GPT 4.1'],
+                    { report: vi.fn() },
+                    { isCancellationRequested: false } as CancellationToken
+                )
+            ).rejects.toThrow(
+                'Expected one display name for each review model.'
+            );
+
+            expect(reviewDiff).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('review cancellation', () => {
+        it('should handle cancellation with partial results', () => {
+            const results: ModelReviewResult[] = [
+                {
+                    modelId: 'copilot:gpt-4',
+                    modelName: 'GPT-4',
+                    result: createMockReviewResult([
+                        {
+                            target: 'test.ts',
+                            comments: [
+                                {
+                                    file: 'test.ts',
+                                    line: 10,
+                                    comment: 'Partial result',
+                                    severity: 3,
+                                },
+                            ],
+                            maxSeverity: 3,
+                        },
+                    ]),
+                },
+            ];
+
+            const hasAnyComments = results.some(
+                (r) => r.result.fileComments.length > 0
+            );
+            expect(hasAnyComments).toBe(true);
+            // Should show "Cancelled, showing partial results."
+        });
+
+        it('should handle cancellation with no results', () => {
+            const results: ModelReviewResult[] = [
+                {
+                    modelId: 'copilot:gpt-4',
+                    modelName: 'GPT-4',
+                    result: createMockReviewResult([]),
+                },
+            ];
+
+            const hasAnyComments = results.some(
+                (r) => r.result.fileComments.length > 0
+            );
+            expect(hasAnyComments).toBe(false);
+            // Should show "Cancelled."
+        });
+    });
+
+    describe('error handling', () => {
+        it('should keep formatted error stacks consistent with their messages', () => {
+            const failure = new Error('provider unavailable');
+            failure.stack =
+                'Error: provider unavailable\n    at reviewDiff (review.ts:1:1)';
+
+            const formatted = formatModelReviewError({
+                modelId: 'copilot:claude',
+                modelName: 'Claude',
+                error: failure,
+            });
+
+            expect(formatted.message).toBe(
+                'Claude (copilot:claude) failed: provider unavailable'
+            );
+            expect(formatted.cause).toBe(failure);
+            expect(formatted.stack?.split('\n')[0]).toBe(
+                'Error: Claude (copilot:claude) failed: provider unavailable'
+            );
+            expect(formatted.stack).toContain(
+                '    at reviewDiff (review.ts:1:1)'
+            );
+        });
+
+        it('should preserve formatted model error names', () => {
+            class ModelPermissionError extends Error {
+                constructor(message: string) {
+                    super(message);
+                    this.name = 'ModelPermissionError';
+                }
+            }
+
+            const failure = new ModelPermissionError('permission denied');
+            failure.stack =
+                'ModelPermissionError: permission denied\n    at getModel (model.ts:1:1)';
+
+            const formatted = formatModelReviewError({
+                modelId: 'copilot:gpt-4.1',
+                modelName: 'GPT-4.1',
+                error: failure,
+            });
+
+            expect(formatted.name).toBe('ModelPermissionError');
+            expect(formatted.message).toBe(
+                'GPT-4.1 (copilot:gpt-4.1) failed: permission denied'
+            );
+            expect(formatted.stack?.split('\n')[0]).toBe(
+                'ModelPermissionError: GPT-4.1 (copilot:gpt-4.1) failed: permission denied'
+            );
+        });
+
+        it('should report model-level failures in chat output', async () => {
+            vi.clearAllMocks();
+
+            let participantHandler:
+                | Parameters<typeof vscode.chat.createChatParticipant>[1]
+                | undefined;
+
+            vi.mocked(vscode.chat.createChatParticipant).mockImplementation(
+                (_id, handler) => {
+                    participantHandler = handler;
+                    return {} as vscode.ChatParticipant;
+                }
+            );
+            vi.mocked(vscode.Uri.joinPath).mockReturnValue({} as vscode.Uri);
+            vi.mocked(vscode.lm.selectChatModels).mockResolvedValue([
+                model('copilot', 'gpt-4.1', 'GPT 4.1') as LanguageModelChat,
+                model('copilot', 'claude', 'Claude') as LanguageModelChat,
+            ]);
+
+            const config = {
+                getOptions: vi.fn(() => ({
+                    chatModel: 'copilot:gpt-4.1',
+                    selectChatModelForReview: 'Always ask',
+                    outputModeWithMultipleModels: 'Separate sections',
+                    maxConcurrentModelRequests: 1,
+                    minSeverity: 1,
+                })),
+                promptForSessionModelIds: vi
+                    .fn()
+                    .mockResolvedValue(['copilot:gpt-4.1', 'copilot:claude']),
+                getModel: vi.fn(),
+                logger: { info: vi.fn() },
+                git: {
+                    getCommitRef: vi.fn(async (ref: string) => ref),
+                    isUncommitted: vi.fn(() => false),
+                    isValidRefPair: vi.fn(() => true),
+                    isSameRef: vi.fn().mockResolvedValue(false),
+                    isBranch: vi.fn().mockResolvedValue(true),
+                    getReviewScope: vi.fn().mockResolvedValue({
+                        target: 'feature',
+                        base: 'main',
+                        isCommitted: true,
+                        isTargetCheckedOut: true,
+                    }),
+                },
+            } as unknown as Config;
+            vi.mocked(getConfig).mockResolvedValue(config);
+
+            const failure = new Error('provider unavailable');
+            vi.mocked(reviewDiff)
+                .mockResolvedValueOnce(createMockReviewResult([]))
+                .mockRejectedValueOnce(failure);
+
+            registerChatParticipant({
+                extensionUri: {} as vscode.Uri,
+            } as vscode.ExtensionContext);
+
+            await participantHandler?.(
+                {
+                    command: 'review',
+                    prompt: 'feature main',
+                } as vscode.ChatRequest,
+                {} as vscode.ChatContext,
+                mockStream,
+                { isCancellationRequested: false } as CancellationToken
+            );
+
+            expect(mockStream.markdown).toHaveBeenCalledWith(
+                expect.stringContaining(
+                    'Claude (copilot:claude) failed: provider unavailable'
+                )
+            );
+        });
+
+        it('should aggregate errors from multiple models', () => {
+            const results: ModelReviewResult[] = [
+                {
+                    modelId: 'copilot:gpt-4',
+                    modelName: 'GPT-4',
+                    result: {
+                        ...createMockReviewResult([]),
+                        errors: [new Error('GPT-4 error')],
+                    },
+                },
+                {
+                    modelId: 'copilot:claude-sonnet',
+                    modelName: 'Claude Sonnet',
+                    result: {
+                        ...createMockReviewResult([]),
+                        errors: [new Error('Claude error')],
+                    },
+                },
+            ];
+
+            const allErrors = results.flatMap((r) => r.result.errors);
+            expect(allErrors).toHaveLength(2);
+            expect(allErrors[0].message).toBe('GPT-4 error');
+            expect(allErrors[1].message).toBe('Claude error');
+        });
+    });
+});
+
+// ── resolveOneModelSpec tests ──────────────────────────────────────────
+
+function model(vendor: string, id: string, name?: string): ModelInfo {
+    return { vendor, id, name: name ?? id };
+}
+
+const sampleModels: ModelInfo[] = [
+    model('copilot', 'gpt-4.1', 'GPT 4.1'),
+    model('copilot', 'gpt-4o', 'GPT 4o'),
+    model('copilot', 'gpt-3.5-turbo', 'GPT 3.5 Turbo'),
+    model('copilot', 'claude-sonnet-4', 'Claude Sonnet 4'),
+    model('copilot', 'gemini-2.5-pro', 'Gemini 2.5 Pro'),
+    model('azure', 'gpt-4.1', 'Azure GPT 4.1'),
+];
+
+describe('resolveOneModelSpec', () => {
+    // ── Exact matching ────────────────────────────────────────────────
+
+    it('should resolve exact vendor:id match', () => {
+        const result = resolveOneModelSpec('copilot:gpt-4.1', sampleModels);
+        expect(result).toEqual({ match: 'copilot:gpt-4.1' });
+    });
+
+    it('should resolve exact vendor:id match case-insensitively', () => {
+        const result = resolveOneModelSpec('COPILOT:GPT-4.1', sampleModels);
+        expect(result).toEqual({ match: 'copilot:gpt-4.1' });
+    });
+
+    it('should resolve exact id match (any vendor)', () => {
+        const result = resolveOneModelSpec('claude-sonnet-4', sampleModels);
+        expect(result).toEqual({ match: 'copilot:claude-sonnet-4' });
+    });
+
+    it('should resolve exact id match case-insensitively', () => {
+        const result = resolveOneModelSpec('CLAUDE-SONNET-4', sampleModels);
+        expect(result).toEqual({ match: 'copilot:claude-sonnet-4' });
+    });
+
+    it('should return ambiguous for exact id matches across vendors', () => {
+        const result = resolveOneModelSpec('gpt-4.1', sampleModels);
+        expect(result).toEqual({
+            ambiguous: ['copilot:gpt-4.1', 'azure:gpt-4.1'],
+        });
+    });
+
+    it('should prefer exact vendor:id over exact id match', () => {
+        const result = resolveOneModelSpec('azure:gpt-4.1', sampleModels);
+        expect(result).toEqual({ match: 'azure:gpt-4.1' });
+    });
+
+    it('should resolve Copilot Code Review by provider name prefix', () => {
+        const result = resolveOneModelSpec('copilot code', sampleModels);
+        expect(result).toEqual({ match: 'copilot-code-review' });
+    });
+
+    it('should not resolve Copilot Code Review for short or generic substrings', () => {
+        expect(resolveOneModelSpec('review', sampleModels)).toEqual({});
+        expect(resolveOneModelSpec('code', sampleModels)).toEqual({});
+    });
+
+    // ── Fix #4: colon handling ────────────────────────────────────────
+
+    it('should handle model IDs with multiple colons', () => {
+        const models: ModelInfo[] = [
+            model('vendor', 'group:sub:model', 'Deep Model'),
+        ];
+        const result = resolveOneModelSpec('vendor:group:sub:model', models);
+        expect(result).toEqual({ match: 'vendor:group:sub:model' });
+    });
+
+    it('should not truncate ID after second colon', () => {
+        const models: ModelInfo[] = [
+            model('myvendor', 'a:b:c', 'ABC Model'),
+            model('myvendor', 'a:b', 'AB Model'),
+        ];
+        // Should match 'a:b:c' not 'a:b'
+        const result = resolveOneModelSpec('myvendor:a:b:c', models);
+        expect(result).toEqual({ match: 'myvendor:a:b:c' });
+    });
+
+    // ── Fix #5: ambiguous substring matching on id ────────────────────
+
+    it('should resolve unique substring match on id', () => {
+        const result = resolveOneModelSpec('gemini', sampleModels);
+        expect(result).toEqual({ match: 'copilot:gemini-2.5-pro' });
+    });
+
+    it('should return ambiguous when multiple ids match substring', () => {
+        // 'gpt-4' matches 'gpt-4.1' and 'gpt-4o'
+        // (also 'gpt-4.1' from azure, making 3 matches)
+        const result = resolveOneModelSpec('gpt-4', sampleModels);
+        expect(result.ambiguous).toBeDefined();
+        expect(result.ambiguous?.length).toBeGreaterThan(1);
+        expect(result.match).toBeUndefined();
+    });
+
+    it('should list all ambiguous candidates in the result', () => {
+        const result = resolveOneModelSpec('gpt-4', sampleModels);
+        expect(result.ambiguous).toContain('copilot:gpt-4.1');
+        expect(result.ambiguous).toContain('copilot:gpt-4o');
+        expect(result.ambiguous).toContain('azure:gpt-4.1');
+    });
+
+    // ── Fix #5: ambiguous substring matching on name ──────────────────
+
+    it('should resolve unique substring match on name', () => {
+        const result = resolveOneModelSpec('Gemini', sampleModels);
+        // No exact id match → no id substring → name substring yields 1
+        expect(result).toEqual({ match: 'copilot:gemini-2.5-pro' });
+    });
+
+    it('should return ambiguous when multiple names match substring', () => {
+        const models: ModelInfo[] = [
+            model('v', 'model-a', 'Turbo Alpha'),
+            model('v', 'model-b', 'Turbo Beta'),
+        ];
+        // 'Turbo' matches both names
+        const result = resolveOneModelSpec('Turbo', models);
+        expect(result.ambiguous).toBeDefined();
+        expect(result.ambiguous).toEqual(['v:model-a', 'v:model-b']);
+        expect(result.match).toBeUndefined();
+    });
+
+    // ── Not found ─────────────────────────────────────────────────────
+
+    it('should return empty result when nothing matches', () => {
+        const result = resolveOneModelSpec('nonexistent', sampleModels);
+        expect(result.match).toBeUndefined();
+        expect(result.ambiguous).toBeUndefined();
+    });
+
+    it('should return empty result when vendor:id does not match', () => {
+        const result = resolveOneModelSpec(
+            'unknown:unknown-model',
+            sampleModels
+        );
+        expect(result.match).toBeUndefined();
+        expect(result.ambiguous).toBeUndefined();
+    });
+
+    // ── Fix #2: de-duplication (shown at integration level) ──────────
+
+    it('should allow callers to de-duplicate via Set (integration smoke test)', () => {
+        // Simulate calling resolveOneModelSpec twice with the same spec
+        const r1 = resolveOneModelSpec('claude-sonnet-4', sampleModels);
+        const r2 = resolveOneModelSpec('claude-sonnet-4', sampleModels);
+
+        const ids = new Set<string>();
+        if (r1.match) ids.add(r1.match);
+        if (r2.match) ids.add(r2.match);
+
+        expect(ids.size).toBe(1);
+        expect([...ids]).toEqual(['copilot:claude-sonnet-4']);
+    });
+
+    it('should produce identical output for duplicate specs enabling Set de-dup', () => {
+        const specs = ['copilot:gpt-4o', 'gpt-4o', 'copilot:gpt-4o'];
+        const resolved = new Set<string>();
+        for (const spec of specs) {
+            const r = resolveOneModelSpec(spec, sampleModels);
+            if (r.match) resolved.add(r.match);
+        }
+        expect(resolved.size).toBe(1);
+        expect([...resolved]).toEqual(['copilot:gpt-4o']);
+    });
+
+    // ── Priority ordering ─────────────────────────────────────────────
+
+    it('should prefer exact id match over substring match', () => {
+        const models: ModelInfo[] = [
+            model('v1', 'gpt-4', 'GPT Four'),
+            model('v1', 'gpt-4-turbo', 'GPT Four Turbo'),
+        ];
+        const result = resolveOneModelSpec('gpt-4', models);
+        // Exact id match should win, not substring
+        expect(result).toEqual({ match: 'v1:gpt-4' });
+    });
+
+    it('should fall through id substring to name substring', () => {
+        const models: ModelInfo[] = [model('v', 'abc-123', 'Sonnet Model')];
+        // No id substring match for 'Sonnet', but name matches
+        const result = resolveOneModelSpec('Sonnet', models);
+        expect(result).toEqual({ match: 'v:abc-123' });
+    });
+});
+
+describe('suggestClosestModelSpec', () => {
+    it('should suggest closest model for a typo', () => {
+        const suggestion = suggestClosestModelSpec('gpt-41', sampleModels);
+        expect(suggestion).toBe('gpt-4.1');
+    });
+
+    it('should prefer vendor:id suggestion when typo includes vendor', () => {
+        const suggestion = suggestClosestModelSpec(
+            'copilot:gpt-41',
+            sampleModels
+        );
+        expect(suggestion).toBe('copilot:gpt-4.1');
+    });
+
+    it('should return undefined when there are no models', () => {
+        const suggestion = suggestClosestModelSpec('gpt-41', []);
+        expect(suggestion).toBeUndefined();
+    });
+
+    it('should return case-only suggestion when found', () => {
+        const suggestion = suggestClosestModelSpec(
+            'COPILOT:GPT-4.1',
+            sampleModels
+        );
+        expect(suggestion).toBe('copilot:gpt-4.1');
+    });
+});

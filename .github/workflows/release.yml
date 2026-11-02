@@ -11,18 +11,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 0
         fetch-tags: true
-    - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4
+    - uses: pnpm/action-setup@08c4be7e2e672a47d11bd04269e27e5f3e8529cb # v6.0.0
+    - uses: actions/setup-node@v6
       with:
-        version: 9
-    - name: Use Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 22.x
-        cache: 'pnpm'
+        node-version: 24.x
+        package-manager-cache: false
     - run: pnpm i
     - run: pnpm test
     - run: pnpm lint
@@ -33,4 +30,4 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         VSCE_PAT: ${{ secrets.VSCE_PAT }}
       run: >-
-        bash .github/workflows/release.sh ${{ github.ref_name }}
+        bash .github/workflows/release.sh ${GITHUB_REF_NAME}

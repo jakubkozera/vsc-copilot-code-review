@@ -1,11 +1,11 @@
+import * as path from 'node:path';
+import * as vscode from 'vscode';
 import { reviewDiff } from '@/review/review';
 import { Config } from '@/types/Config';
 import { FileComments } from '@/types/FileComments';
 import { ProposedAdjustment, ReviewComment } from '@/types/ReviewComment';
 import { ReviewRequest, ReviewScope } from '@/types/ReviewRequest';
 import { ReviewResult } from '@/types/ReviewResult';
-import * as path from 'path';
-import * as vscode from 'vscode';
 import { getConfig } from './config';
 
 type WebviewMessage =
@@ -331,7 +331,7 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
 
             const progress = {
                 lastMessage: '',
-                report: ({ message }: { message: string }) => {
+                report: ({ message }: { message?: string }) => {
                     if (message && message !== progress.lastMessage) {
                         this._view?.webview.postMessage({
                             type: 'reviewProgress',
@@ -342,12 +342,10 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                 },
             };
 
-            const result = await reviewDiff(
-                this._config,
-                reviewRequest,
+            const result = await reviewDiff(this._config, reviewRequest, {
                 progress,
-                new vscode.CancellationTokenSource().token
-            );
+                cancellationToken: new vscode.CancellationTokenSource().token,
+            });
 
             // Filter comments by severity and send progressive updates
             const options = this._config.getOptions();
@@ -689,7 +687,9 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
 
         try {
             // Clear existing comment threads
-            this._commentThreads.forEach((thread) => thread.dispose());
+            for (const thread of this._commentThreads) {
+                thread.dispose();
+            }
             this._commentThreads = [];
 
             // Convert relative path to absolute path using git root
@@ -832,7 +832,9 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
 
     public dispose() {
         // Clean up comment threads
-        this._commentThreads.forEach((thread) => thread.dispose());
+        for (const thread of this._commentThreads) {
+            thread.dispose();
+        }
         this._commentThreads = [];
 
         // Clean up comment controller

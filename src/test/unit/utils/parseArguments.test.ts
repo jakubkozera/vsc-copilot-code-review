@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { UncommittedRef } from '@/types/Ref';
 import { Git } from '@/utils/git';
-import { parseArguments } from '@/utils/parseArguments';
+import {
+    extractContextSpecs,
+    extractModelSpecs,
+    parseArguments,
+} from '@/utils/parseArguments';
 
 describe('parseArguments', () => {
     const mockGit = {
@@ -10,6 +15,12 @@ describe('parseArguments', () => {
 
     it('parses empty arguments', async () => {
         const result = await parseArguments(mockGit, '');
+
+        expect(result).toEqual({ target: undefined, base: undefined });
+    });
+
+    it('parses only whitespace arguments', async () => {
+        const result = await parseArguments(mockGit, ' \t  \t');
 
         expect(result).toEqual({ target: undefined, base: undefined });
     });
@@ -30,46 +41,339 @@ describe('parseArguments', () => {
         expect(mockGit.getCommitRef).toHaveBeenCalledTimes(2);
     });
 
-    it('parses two arguments with whitespace', async () => {
+    it('parses two arguments with surrounding whitespace', async () => {
         const result = await parseArguments(mockGit, ' target base ');
 
         expect(result).toEqual({ target: 'target', base: 'base' });
     });
 
-    it('parses single non-commit-ref argument into empty object', async () => {
-        vi.mocked(mockGit.getCommitRef).mockRejectedValue(new Error());
+    it('parses two arguments with extra whitespace', async () => {
+        const result = await parseArguments(
+            mockGit,
+            'target \t\t      base     '
+        );
 
-        const result = await parseArguments(mockGit, 'prompt');
-
-        expect(result).toEqual({});
+        expect(result).toEqual({ target: 'target', base: 'base' });
     });
 
-    it('parses two non-commit-ref arguments into empty object', async () => {
+    it('throws for single non-commit-ref argument', async () => {
         vi.mocked(mockGit.getCommitRef).mockRejectedValue(new Error());
 
-        const result = await parseArguments(mockGit, 'prompt1 prompt2');
+        await expect(parseArguments(mockGit, 'prompt')).rejects.toThrow(
+            "Could not find target ref 'prompt'."
+        );
+    });
 
-        expect(result).toEqual({});
+    it('throws for two non-commit-ref arguments', async () => {
+        vi.mocked(mockGit.getCommitRef).mockRejectedValue(new Error());
+
+        await expect(
+            parseArguments(mockGit, 'prompt1 prompt2')
+        ).rejects.toThrow("Could not find target ref 'prompt1'.");
     });
 
     it('throws on more than two arguments', async () => {
         vi.mocked(mockGit.getCommitRef).mockRejectedValue(new Error());
 
-        await expect(() =>
+        await expect(
             parseArguments(mockGit, 'target base extra')
-        ).rejects.toThrow(
-            'Expected at most two refs as arguments. Use the command without arguments to select refs interactively.'
-        );
+        ).rejects.toThrow('Expected at most two refs as arguments.');
         expect(mockGit.getCommitRef).not.toHaveBeenCalled();
     });
 
-    it('parses single commit-ref argument plus non-commit-ref', async () => {
+    it('throws on single commit-ref argument plus non-commit-ref', async () => {
         vi.mocked(mockGit.getCommitRef)
             .mockResolvedValueOnce('')
             .mockRejectedValue(new Error());
 
-        const result = await parseArguments(mockGit, 'target extra');
+        await expect(parseArguments(mockGit, 'target extra')).rejects.toThrow(
+            "Could not find base ref 'extra'."
+        );
+    });
 
-        expect(result).toEqual({ target: 'target' });
+    it('parses "staged"', async () => {
+        const result = await parseArguments(mockGit, 'staged');
+
+        expect(result).toEqual({
+            target: UncommittedRef.Staged,
+            base: undefined,
+        });
+
+        expect(mockGit.getCommitRef).toHaveBeenCalledTimes(0);
+    });
+
+    it('parses "unstaged"', async () => {
+        const result = await parseArguments(mockGit, 'unstaged');
+
+        expect(result).toEqual({
+            target: UncommittedRef.Unstaged,
+            base: undefined,
+        });
+
+        expect(mockGit.getCommitRef).toHaveBeenCalledTimes(0);
+    });
+
+    it('throws for additional arguments after an uncommitted ref', async () => {
+        vi.mocked(mockGit.getCommitRef).mockRejectedValueOnce(new Error());
+
+        await expect(parseArguments(mockGit, 'staged extra')).rejects.toThrow(
+            "Expected no argument after 'staged'."
+        );
+    });
+
+    it('parses staged as a branch ref when a base ref is provided', async () => {
+        vi.mocked(mockGit.getCommitRef).mockResolvedValue('');
+
+        const result = await parseArguments(mockGit, 'staged base');
+
+        expect(result).toEqual({ target: 'staged', base: 'base' });
+    });
+
+    describe('inline model specs', () => {
+        it('extracts a single model spec', async () => {
+            const result = await parseArguments(
+                mockGit,
+                'model:gpt-4.1 target base'
+            );
+
+            expect(result).toEqual({
+                target: 'target',
+                base: 'base',
+                modelIds: ['gpt-4.1'],
+            });
+        });
+
+        it('extracts multiple model specs', async () => {
+            const result = await parseArguments(
+                mockGit,
+                'model:gpt-4.1 model:claude-sonnet target base'
+            );
+
+            expect(result).toEqual({
+                target: 'target',
+                base: 'base',
+                modelIds: ['gpt-4.1', 'claude-sonnet'],
+            });
+        });
+
+        it('extracts model specs after refs', async () => {
+            const result = await parseArguments(
+                mockGit,
+                'target model:gpt-4.1 base'
+            );
+
+            expect(result).toEqual({
+                target: 'target',
+                base: 'base',
+                modelIds: ['gpt-4.1'],
+            });
+        });
+
+        it('extracts model specs with vendor prefix', async () => {
+            const result = await parseArguments(
+                mockGit,
+                'model:copilot:gpt-4.1 target'
+            );
+
+            expect(result).toEqual({
+                target: 'target',
+                modelIds: ['copilot:gpt-4.1'],
+            });
+        });
+
+        it('extracts model specs with staged ref', async () => {
+            const result = await parseArguments(
+                mockGit,
+                'model:gpt-4.1 staged'
+            );
+
+            expect(result).toEqual({
+                target: UncommittedRef.Staged,
+                modelIds: ['gpt-4.1'],
+            });
+        });
+
+        it('extracts model specs with no refs', async () => {
+            const result = await parseArguments(
+                mockGit,
+                'model:gpt-4.1 model:claude-sonnet'
+            );
+
+            expect(result).toEqual({
+                modelIds: ['gpt-4.1', 'claude-sonnet'],
+            });
+        });
+
+        it('ignores empty model: prefix', async () => {
+            const result = await parseArguments(mockGit, 'model: target base');
+
+            expect(result).toEqual({ target: 'target', base: 'base' });
+        });
+
+        it('still throws on too many non-model refs', async () => {
+            await expect(
+                parseArguments(mockGit, 'model:gpt-4.1 target base extra')
+            ).rejects.toThrow('Expected at most two refs as arguments.');
+        });
+
+        it('extracts context file overrides', async () => {
+            const result = await parseArguments(
+                mockGit,
+                'context:AGENTS.md context:docs/README.md target base'
+            );
+
+            expect(result).toEqual({
+                target: 'target',
+                base: 'base',
+                contextFilesOverride: ['AGENTS.md', 'docs/README.md'],
+            });
+        });
+
+        it('extracts context:none as an empty override', async () => {
+            const result = await parseArguments(
+                mockGit,
+                'model:gpt-4.1 context:none target base'
+            );
+
+            expect(result).toEqual({
+                target: 'target',
+                base: 'base',
+                modelIds: ['gpt-4.1'],
+                contextFilesOverride: [],
+            });
+        });
+
+        it('ignores empty context tokens instead of disabling context', async () => {
+            const result = await parseArguments(
+                mockGit,
+                'model:gpt-4.1 context: target base'
+            );
+
+            expect(result).toEqual({
+                target: 'target',
+                base: 'base',
+                modelIds: ['gpt-4.1'],
+            });
+        });
+    });
+});
+
+describe('extractModelSpecs', () => {
+    it('extracts model specs from mixed tokens', () => {
+        const result = extractModelSpecs(
+            'model:gpt-4.1 develop model:claude-sonnet main'
+        );
+
+        expect(result).toEqual({
+            modelIds: ['gpt-4.1', 'claude-sonnet'],
+            remaining: ['develop', 'main'],
+        });
+    });
+
+    it('returns empty modelIds when no model: tokens present', () => {
+        const result = extractModelSpecs('develop main');
+
+        expect(result).toEqual({
+            modelIds: [],
+            remaining: ['develop', 'main'],
+        });
+    });
+
+    it('handles empty string', () => {
+        const result = extractModelSpecs('');
+
+        expect(result).toEqual({
+            modelIds: [],
+            remaining: [],
+        });
+    });
+
+    it('skips model: tokens with no value', () => {
+        const result = extractModelSpecs('model: develop');
+
+        expect(result).toEqual({
+            modelIds: [],
+            remaining: ['develop'],
+        });
+    });
+
+    it('handles vendor:id format in model spec', () => {
+        const result = extractModelSpecs('model:copilot:gpt-4.1');
+
+        expect(result).toEqual({
+            modelIds: ['copilot:gpt-4.1'],
+            remaining: [],
+        });
+    });
+
+    it('matches MODEL: prefix case-insensitively', () => {
+        const result = extractModelSpecs('MODEL:copilot:gpt-4.1 develop');
+
+        expect(result).toEqual({
+            modelIds: ['copilot:gpt-4.1'],
+            remaining: ['develop'],
+        });
+    });
+
+    it('strips trailing punctuation from model specs', () => {
+        const result = extractModelSpecs('model:gpt-4.1, main');
+
+        expect(result).toEqual({
+            modelIds: ['gpt-4.1'],
+            remaining: ['main'],
+        });
+    });
+});
+
+describe('extractContextSpecs', () => {
+    it('extracts context overrides from mixed tokens', () => {
+        const result = extractContextSpecs(
+            'context:AGENTS.md develop context:docs/README.md main'
+        );
+
+        expect(result).toEqual({
+            contextFilesOverride: ['AGENTS.md', 'docs/README.md'],
+            remaining: ['develop', 'main'],
+        });
+    });
+
+    it('treats context:none as disabling all context files', () => {
+        const result = extractContextSpecs(
+            'context:AGENTS.md context:none develop main'
+        );
+
+        expect(result).toEqual({
+            contextFilesOverride: [],
+            remaining: ['develop', 'main'],
+        });
+    });
+
+    it('allows context files after context:none', () => {
+        const result = extractContextSpecs(
+            'context:none context:AGENTS.md develop main'
+        );
+
+        expect(result).toEqual({
+            contextFilesOverride: ['AGENTS.md'],
+            remaining: ['develop', 'main'],
+        });
+    });
+
+    it('ignores context: tokens with no value', () => {
+        const result = extractContextSpecs('context: develop');
+
+        expect(result).toEqual({
+            contextFilesOverride: undefined,
+            remaining: ['develop'],
+        });
+    });
+
+    it('ignores punctuation-only context tokens', () => {
+        const result = extractContextSpecs('context:... develop');
+
+        expect(result).toEqual({
+            contextFilesOverride: undefined,
+            remaining: ['develop'],
+        });
     });
 });

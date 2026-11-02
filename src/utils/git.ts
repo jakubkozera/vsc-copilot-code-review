@@ -1,7 +1,8 @@
-import simpleGit, { SimpleGit } from 'simple-git';
+import { SimpleGit, simpleGit } from 'simple-git';
 
-import { UncommittedRef, type Ref } from '@/types/Ref';
-import { ReviewScope } from '@/types/ReviewRequest';
+import type { DiffFile } from '@/types/DiffFile';
+import { type Ref, UncommittedRef } from '@/types/Ref';
+import type { ReviewScope } from '@/types/ReviewRequest';
 
 /** same as git's default length for short commit hashes */
 export const shortHashLength = 7;
@@ -9,11 +10,7 @@ export const shortHashLength = 7;
 /** Git's empty tree object hash, useful when comparing against the initial commit. */
 export const GIT_EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
-export type DiffFile = {
-    file: string;
-    from?: string; //previous file name (if renamed)
-    status: string; // see --diff-filter in git-diff(1). Interesting for us: D (deleted), R (renamed)
-};
+const remoteBranchPattern = /^(?:remotes\/)?([^/]+)\/(.+)$/;
 
 /** Create a new Git instance */
 export async function createGit(workspaceRoot: string): Promise<Git> {
@@ -24,7 +21,11 @@ export async function createGit(workspaceRoot: string): Promise<Git> {
     return new Git(git, gitRoot);
 }
 
-/** Handles all git-related operations in the current repository */
+/** Handles all git-related operations in the current repository
+ *
+ * Note: for all simple-git calls, pass arguments as an array (not string)
+ *       and add -- or --end-of-options before any user-controlled input
+ */
 export class Git {
     /** Should not be called directly, use createGit() instead. */
     constructor(
@@ -140,7 +141,7 @@ export class Git {
     }): refs is
         | { target: string; base: string }
         | { target: UncommittedRef; base: undefined } {
-        if (!refs || !refs.target) {
+        if (!refs?.target) {
             return false;
         }
         if (this.isUncommitted(refs.target)) {
@@ -165,6 +166,7 @@ export class Git {
         const rootCommits = await this.git.raw([
             'rev-list',
             '--max-parents=0',
+            '--end-of-options',
             commitRef,
         ]);
         const hashes = rootCommits.trim().split(/\s+/);
@@ -236,6 +238,24 @@ export class Git {
         return logs.all.map((log) => log.message).join('\n');
     }
 
+    /** return the merge-base commit hash for the given refs */
+    async getMergeBase(refA: string, refB: string): Promise<string> {
+        return (await this.git.raw(['merge-base', '--', refA, refB])).trim();
+    }
+
+    /** return file contents at the given ref, or undefined if the file does not exist there */
+    async getFileContentAtRef(
+        ref: string,
+        filePath: string
+    ): Promise<string | undefined> {
+        return await this.getFileContentFromObject(`${ref}:${filePath}`);
+    }
+
+    /** return file contents from the git index, or undefined if the file is not present in the index */
+    async getFileContentAtIndex(filePath: string): Promise<string | undefined> {
+        return await this.getFileContentFromObject(`:${filePath}`);
+    }
+
     /** return true iff if the given refs refer to the same commit */
     async isSameRef(refA: string, refB: string) {
         return (
@@ -255,12 +275,30 @@ export class Git {
             return await this.git.revparse([
                 '--verify',
                 '--end-of-options',
-                ref + '^{}',
+                `${ref}^{}`,
             ]);
         } catch {
             throw new Error(
                 `Invalid ref "${ref}". Please provide a valid commit, branch, tag, or HEAD.`
             );
+        }
+    }
+
+    private async getFileContentFromObject(
+        objectSpec: string
+    ): Promise<string | undefined> {
+        try {
+            return await this.git.show([
+                '--textconv',
+                '--no-ext-diff',
+                '--end-of-options',
+                objectSpec,
+            ]);
+        } catch (error) {
+            if (isMissingGitObjectError(error)) {
+                return undefined;
+            }
+            throw error;
         }
     }
 
@@ -274,19 +312,22 @@ export class Git {
         return ref === UncommittedRef.Staged || ref === UncommittedRef.Unstaged;
     }
 
-    /** returns up to `maxCount` branches. Branches are sorted by last commit date,
-     * with current branch first. Branches with same ref are grouped together.
+    /** returns up to `maxCount` branches. Branches with same ref are grouped together.
      *
-     * If `beforeRef` is given, only returns branches that don't include that ref, and
-     * prioritizes the suspected remote branch and common main branches in order.
+     * If `targetRef` is not given, returns branches sorted by last commit date,
+     * with current branch first.
+     *
+     * If `targetRef` is given, only returns branches that don't include `targetRef, and
+     * returns branches sorted by the number of commits they are behind the targetRef,
+     * with remote branch for targetRef first.
      */
     async getBranchList(
-        beforeRef: string | undefined,
+        targetRef: string | undefined,
         maxCount: number
     ): Promise<RefList> {
         const branchOptions = ['--all', '--sort=-committerdate'];
-        if (beforeRef) {
-            branchOptions.push(`--no-contains=${beforeRef}`);
+        if (targetRef) {
+            branchOptions.push(`--no-contains=${targetRef}`);
         }
         const branches = await this.git.branch(branchOptions);
 
@@ -294,6 +335,10 @@ export class Git {
         const orderedUniqueRefs: string[] = [];
         branches.all.forEach((branch) => {
             const branchSummary = branches.branches[branch];
+            // Skip the detached HEAD entry if it appears in branches
+            if (branches.detached && branch === branches.current) {
+                return;
+            }
             if (branchSummary.commit in branchesByCommitRef) {
                 branchesByCommitRef[branchSummary.commit].push(branch);
             } else {
@@ -302,46 +347,127 @@ export class Git {
             }
         });
 
-        let firstBranch;
-        if (!beforeRef) {
-            //for target: put current branch first
-            firstBranch = new RegExp(`^${branches.current}$`);
-        } else {
-            //for base: put remote for `beforeRef` and common main branches first
-            firstBranch = new RegExp(`^remotes/.*/${beforeRef}$`);
+        const numCommitsBehindMap = await this.getNumCommitsBehindMap(
+            orderedUniqueRefs,
+            targetRef
+        );
+
+        const remoteBranchFirst = (a: string, b: string): number => {
+            // 1) remote for target first - if there are unpushed changes, we likely want to check those
+            const remotesForTargetRegex = new RegExp(
+                `^remotes/.*/${targetRef}$`
+            );
+            const aIsRemote = remotesForTargetRegex.test(a);
+            const bIsRemote = remotesForTargetRegex.test(b);
+            if (aIsRemote && !bIsRemote) return -1;
+            if (!aIsRemote && bIsRemote) return 1;
+            return 0;
+        };
+
+        const compareBranches = (a: string, b: string) => {
+            if (!targetRef) {
+                // target branch: current first
+                if (a === branches.current) return -1;
+                if (b === branches.current) return 1;
+                return 0;
+            }
+
+            // base branch:
+            const remoteRefFirstOrder = remoteBranchFirst(a, b);
+            if (remoteRefFirstOrder !== 0) {
+                return remoteRefFirstOrder;
+            }
+
+            return getBranchNamePriority(a) - getBranchNamePriority(b);
+        };
+
+        const compareCommits = (a: string, b: string) => {
+            const firstBranchA = branchesByCommitRef[a][0];
+            const firstBranchB = branchesByCommitRef[b][0];
+
+            if (!targetRef) {
+                // target branch: just use branch comparison
+                return compareBranches(firstBranchA, firstBranchB);
+            }
+
+            // base branch:
+            // 1) remote branch for current first
+            const remoteRefFirstOrder = remoteBranchFirst(
+                firstBranchA,
+                firstBranchB
+            );
+            if (remoteRefFirstOrder !== 0) {
+                return remoteRefFirstOrder;
+            }
+
+            // 2) otherwise, order by #commits behind
+            const commitsBehindOrder =
+                (numCommitsBehindMap[a] ?? Infinity) -
+                (numCommitsBehindMap[b] ?? Infinity);
+            if (commitsBehindOrder !== 0) {
+                return commitsBehindOrder;
+            }
+
+            // 3) otherwise (same #commits behind), order by branch name
+            return (
+                getBranchNamePriority(firstBranchA) -
+                getBranchNamePriority(firstBranchB)
+            );
+
+            // 4) otherwise (same branch priority), committerdate order preserved by stable sort
+        };
+
+        // sort branches within each unique ref
+        for (const commit in branchesByCommitRef) {
+            branchesByCommitRef[commit].sort(compareBranches);
         }
 
-        // sort each branchesByCommitRef entry
-        for (const commit in branchesByCommitRef) {
-            branchesByCommitRef[commit].sort(
-                (a, b) =>
-                    getBranchPriority(a, firstBranch) -
-                    getBranchPriority(b, firstBranch)
-            );
-        }
-        // sort the orderedUniqueRefs
-        orderedUniqueRefs.sort(
-            (a, b) =>
-                getBranchPriority(branchesByCommitRef[a][0], firstBranch) -
-                getBranchPriority(branchesByCommitRef[b][0], firstBranch)
-        );
+        // sort unique refs
+        orderedUniqueRefs.sort(compareCommits);
 
         const refs = orderedUniqueRefs.map((commit) => {
             const [ref, ...otherBranches] = branchesByCommitRef[commit];
             const isCurrent = branches.branches[ref].current;
 
-            let description = '';
-            if (isCurrent) {
-                description += '(current) ';
-            }
-            description += commit.substring(0, shortHashLength);
+            const description = formatDescription(
+                isCurrent,
+                commit,
+                numCommitsBehindMap[commit]
+            );
 
-            const extra = formatExtraBranches(otherBranches);
-
-            return { ref, description, extra };
+            return {
+                ref,
+                description,
+                extra: formatExtra(otherBranches),
+            };
         });
 
         return refs.slice(0, maxCount);
+    }
+
+    /** Returns information about the current detached HEAD, if applicable.
+     * Returns undefined if HEAD is not detached
+     */
+    async getDetachedHead(): Promise<
+        { ref: string; name: string; description?: string } | undefined
+    > {
+        const branches = await this.git.branch();
+
+        if (!branches.detached) {
+            return undefined;
+        }
+
+        const commitHash = await this.git.revparse(['HEAD']);
+        const name = branches.current;
+        const description = commitHash.startsWith(name)
+            ? '(current)'
+            : formatDescription(true, commitHash, undefined);
+
+        return {
+            ref: commitHash,
+            name,
+            description,
+        };
     }
 
     /** returns up to `maxCount` tags.
@@ -352,14 +478,27 @@ export class Git {
         beforeRef: string | undefined,
         maxCount: number
     ): Promise<RefList> {
-        const tagOptions = ['--sort=-creatordate'];
+        const tagOptions = [
+            'tag',
+            '--format=%(refname:short)\t%(contents:subject)',
+            '--sort=-creatordate',
+        ];
         if (beforeRef) {
             tagOptions.push(`--no-contains=${beforeRef}`);
         }
-        const tags = await this.git.tags(tagOptions);
-        return tags.all.slice(0, maxCount).map((tag) => ({
-            ref: tag,
-        }));
+        const output = await this.git.raw(tagOptions);
+
+        return output
+            .split('\n')
+            .filter(Boolean)
+            .slice(0, maxCount)
+            .map((line) => {
+                const tabIndex = line.indexOf('\t');
+                const name = line.substring(0, tabIndex);
+                const description =
+                    line.substring(tabIndex + 1).trim() || undefined;
+                return { ref: name, description };
+            });
     }
 
     /** returns up to `maxCount` commit refs.
@@ -372,7 +511,7 @@ export class Git {
     ): Promise<RefList> {
         const logOptions = [`--max-count=${maxCount}`];
         if (beforeRef) {
-            logOptions.push(`${beforeRef}^`);
+            logOptions.push('--end-of-options', `${beforeRef}^`);
         }
         const commits = await this.git.log(logOptions);
 
@@ -405,6 +544,214 @@ export class Git {
         }
         return refs;
     }
+
+    /**
+     * Calculate the number of commits a list of refs is behind another ref.
+     * @param refs refs to check
+     * @param targetRef ref to compare against
+     * @param timeoutMs timeout in milliseconds
+     * @returns A map of refs to the number of commits ref is behind targetRef, or Infinity if calculation fails
+     */
+    async getNumCommitsBehindMap(
+        refs: string[],
+        targetRef: string | undefined,
+        timeoutMs = 500
+    ): Promise<{ [commit: string]: number | undefined }> {
+        if (!targetRef) {
+            return {};
+        }
+
+        const timeout = () =>
+            new Promise<string>((_, reject) =>
+                setTimeout(() => reject(new Error()), timeoutMs)
+            );
+
+        const getNumCommitsBehind = async (ref: string) => {
+            try {
+                const result = await Promise.race([
+                    this.git.raw([
+                        'rev-list',
+                        '--count',
+                        '--end-of-options',
+                        `${ref}..${targetRef}`,
+                    ]),
+                    timeout(),
+                ]);
+                return parseInt(result, 10);
+            } catch {
+                return Infinity;
+            }
+        };
+
+        const behindCounts = await Promise.all(refs.map(getNumCommitsBehind));
+
+        const numCommitsBehindMap: { [commit: string]: number } = {};
+        refs.forEach((ref, i) => {
+            numCommitsBehindMap[ref] = behindCounts[i];
+        });
+        return numCommitsBehindMap;
+    }
+
+    /** returns list of all remotes and their fetch URLs */
+    async getRemotes(): Promise<{ name: string; url: string }[]> {
+        const remotes = await this.git.getRemotes(true);
+        return remotes.map((remote) => ({
+            name: remote.name,
+            url: remote.refs.fetch,
+        }));
+    }
+
+    /**
+     * If ref is a remote branch, returns the local branch name if it exists at the same commit.
+     * Otherwise returns undefined.
+     */
+    async getLocalBranchForRemote(ref: string): Promise<string | undefined> {
+        const remoteBranchMatch = ref.match(remoteBranchPattern);
+        if (!remoteBranchMatch) {
+            return undefined;
+        }
+
+        const [, , branchName] = remoteBranchMatch;
+
+        // Check if local branch exists
+        const branches = await this.git.branch([
+            '--list',
+            '--end-of-options',
+            branchName,
+        ]);
+        if (!branches.all.includes(branchName)) {
+            return undefined;
+        }
+
+        try {
+            if (await this.isSameRef(branchName, ref)) {
+                return branchName;
+            }
+        } catch {
+            // If comparison fails, return undefined
+        }
+
+        return undefined;
+    }
+
+    /** Returns true if a local branch with the given name exists. */
+    async localBranchExists(branchName: string): Promise<boolean> {
+        const branches = await this.git.branch([
+            '--list',
+            '--end-of-options',
+            branchName,
+        ]);
+        return branches.all.includes(branchName);
+    }
+
+    /** checkout the given ref (possibly detached) */
+    async checkout(ref: string) {
+        await this.git.checkout(['--end-of-options', ref]);
+    }
+
+    /**
+     * Check out a review target, avoiding a detached HEAD for remote branches
+     * where possible.
+     *
+     * For a remote branch (e.g. `origin/feature-x`) we prefer landing on a real
+     * local branch:
+     *  - if a matching local branch already points at the same commit, use it;
+     *  - otherwise, if no local branch of that name exists, create one that
+     *    tracks the (explicitly chosen) remote branch;
+     *  - otherwise (a local branch of that name already exists at a different
+     *    commit) fall back to a detached checkout of the remote ref rather than
+     *    clobbering or silently moving to that local branch.
+     *
+     * Returns the ref that was actually checked out and whether HEAD is detached.
+     */
+    async checkoutTarget(
+        ref: string
+    ): Promise<{ ref: string; detached: boolean }> {
+        const branchName = await this.remoteBranchName(ref);
+        if (!branchName) {
+            await this.checkout(ref);
+            return { ref, detached: false };
+        }
+
+        const existingLocal = await this.getLocalBranchForRemote(ref);
+        if (existingLocal) {
+            await this.checkout(existingLocal);
+            return { ref: existingLocal, detached: false };
+        }
+
+        // A divergent local branch of that name already exists: creating a
+        // tracking branch would clobber it and switching to it would review the
+        // wrong code, so fall back to a detached checkout and let the caller
+        // warn.
+        if (await this.localBranchExists(branchName)) {
+            await this.checkout(ref);
+            return { ref, detached: true };
+        }
+
+        await this.git.checkout([
+            '-b',
+            branchName,
+            '--track',
+            '--end-of-options',
+            ref,
+        ]);
+        return { ref: branchName, detached: false };
+    }
+
+    /**
+     * If ref is an existing remote-tracking branch (`origin/feature-x` or
+     * `remotes/origin/feature-x`), returns the bare branch name (without the
+     * remote). Returns undefined for local branches, tags and commits.
+     *
+     * The ref is validated against the actual list of remote-tracking branches
+     * rather than inferred from its shape, so a ref that merely contains a slash
+     * (e.g. `refs/heads/x`, or a tag `origin/v1`) is not misclassified as a
+     * remote branch.
+     */
+    private async remoteBranchName(ref: string): Promise<string | undefined> {
+        const match = ref.match(remoteBranchPattern);
+        if (!match) {
+            return undefined;
+        }
+        const [, remoteName, branchName] = match;
+
+        // `git branch --remotes` lists remote-tracking branches without the
+        // `remotes/` prefix (e.g. `origin/feature-x`). Pass the exact name as
+        // the list pattern so git filters instead of us enumerating all of them.
+        const remoteRef = `${remoteName}/${branchName}`;
+        const remoteBranches = await this.git.branch([
+            '--remotes',
+            '--list',
+            '--end-of-options',
+            remoteRef,
+        ]);
+        if (!remoteBranches.all.includes(remoteRef)) {
+            return undefined;
+        }
+        return branchName;
+    }
+}
+
+/**
+ * Git reports missing objects and missing paths through stderr text rather than
+ * a dedicated error code we can reliably branch on here. These snippets cover
+ * the variants we currently normalize to `undefined` in getFileContentFromObject.
+ * Keep the list and tests aligned when broadening support for new git versions.
+ */
+function isMissingGitObjectError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+        return false;
+    }
+
+    const message = error.message.toLowerCase();
+
+    return [
+        /path '.*' does not exist in /,
+        /exists on disk, but not in /,
+        /pathspec '.*' did not match any file\(s\) known to git/,
+        /\bbad revision\b/,
+        /\bunknown revision or path not in the working tree\b/,
+    ].some((pattern) => pattern.test(message));
 }
 
 export type RefList = {
@@ -413,23 +760,45 @@ export type RefList = {
     extra?: string; // e.g. additional branch names pointing to the same commit
 }[];
 
-function formatExtraBranches(otherBranches: string[]) {
+function formatDescription(
+    isCurrent: boolean,
+    commit: string,
+    numCommitsBehind: number | undefined
+) {
+    let description = '';
+    if (isCurrent) {
+        description += '(current) ';
+    }
+    description += commit.substring(0, shortHashLength);
+    if (numCommitsBehind !== undefined && Number.isFinite(numCommitsBehind)) {
+        description += ` (${numCommitsBehind} commits behind)`;
+    }
+    return description;
+}
+
+function formatExtra(otherBranches: string[]) {
     if (otherBranches.length === 0) {
         return undefined;
     }
-    return '       Same as: ' + otherBranches.join(', ');
+
+    const indentToRefName = '       ';
+    return `${indentToRefName}Same as: ${otherBranches.join(', ')}`;
 }
 
 /** returns a numerical value for the branch priority to be used with sort().
  * Priority is as follows:
- * -5: branch that matches the regex `first`, if provided
- * -4..-1: develop, main, master, trunk
+ * -8..-5: local develop, main, master, trunk
+ * -4..-1: remote develop, main, master, trunk (like remotes/origin/main)
  * 0 otherwise
  */
-function getBranchPriority(ref: string, first?: RegExp) {
-    if (first && first.test(ref)) {
-        return -5;
+function getBranchNamePriority(ref: string) {
+    // Extract branch name from remote refs like "remotes/origin/develop"
+    const remoteMatch = ref.match(/^remotes\/[^/]+\/(.+)$/);
+    const branchName = remoteMatch ? remoteMatch[1] : ref;
+
+    const index = ['develop', 'main', 'master', 'trunk'].indexOf(branchName);
+    if (index >= 0) {
+        return remoteMatch ? -4 + index : -8 + index;
     }
-    const index = ['develop', 'main', 'master', 'trunk'].indexOf(ref);
-    return index >= 0 ? -4 + index : 0;
+    return 0;
 }

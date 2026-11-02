@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
 import {
     parseComment,
@@ -34,7 +34,7 @@ describe('parseComment', () => {
         expect(result).toEqual({
             file: 'a.js',
             comment: 'Some review comment',
-            line: 1,
+            line: 0,
             severity: 1,
         });
     });
@@ -50,9 +50,20 @@ describe('parseComment', () => {
         expect(result).toEqual({
             file: 'a.js',
             comment: 'Some review comment',
-            line: 1,
+            line: 0,
             severity: 4,
         });
+    });
+
+    it('uses default for non-integer line', () => {
+        const result = parseComment({
+            file: 'a.js',
+            comment: 'Some review comment',
+            line: 12.5,
+            severity: 4,
+        });
+
+        expect(result.line).toBe(0);
     });
 
     it('uses default for out-of-range severity', () => {
@@ -100,6 +111,15 @@ describe('parseComment', () => {
 });
 
 describe('parseResponse', () => {
+    //silence console warings during test
+    let consoleWarnSpy: Mock<typeof console.warn>;
+    beforeEach(() => {
+        consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(vi.fn());
+    });
+    afterEach(() => {
+        consoleWarnSpy.mockRestore();
+    });
+
     const responseJsonString = JSON.stringify(responseExample, undefined, 2);
 
     it('normal', () => {
@@ -109,7 +129,7 @@ describe('parseResponse', () => {
     });
 
     it('handles extra bits around JSON', () => {
-        const wrappedJson = '```json\n' + responseJsonString + '\n```';
+        const wrappedJson = `\`\`\`json\n${responseJsonString}\n\`\`\``;
 
         const result = parseResponse(wrappedJson);
 
@@ -117,13 +137,19 @@ describe('parseResponse', () => {
     });
 
     it('handles extra bits around JSON with reasoning tag', () => {
-        const wrappedJson = '```json\n' + responseJsonString + '\n```';
+        const wrappedJson = `\`\`\`json\n${responseJsonString}\n\`\`\``;
         const response = `<code_review_process>[]</code_review_process>\n${wrappedJson}`;
 
         const result = parseResponse(response);
 
         // only 2nd wrapped JSON should be parsed
         expect(result).toEqual(responseExample);
+    });
+
+    it('throws on empty response', () => {
+        expect(() => parseResponse('')).toThrow(
+            'The model returned an empty response'
+        );
     });
 
     it('returns empty list with no comments', () => {

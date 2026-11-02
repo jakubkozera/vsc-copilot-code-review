@@ -1,68 +1,93 @@
 import * as vscode from 'vscode';
 
-import { Config, Options } from '@/types/Config';
-import type { Logger } from '@/types/Logger';
+import type {
+    AutoCheckoutTargetType,
+    ChatModelOnNewPromptType,
+    Config,
+    Options,
+    ReviewFlowType,
+} from '@/types/Config';
 import type { Model } from '@/types/Model';
-import { createGit } from '@/utils/git';
-import { LgtmLogger } from './logger';
-import { getChatModel } from './model';
+import { createGit, type Git } from '@/utils/git';
+import { isCopilotCodeReviewProviderId } from '@/utils/reviewProvider';
+import {
+    defaultFallbackModelId,
+    defaultFallbackModelName,
+    defaultModelId,
+    defaultPreferredModelIds,
+} from './defaultModels';
+import { CodeReviewLogger } from './logger';
+import { getChatModel, getModelQuickPickItems } from './model';
 
 // defined when built via `npm run dev`
 declare const __GIT_VERSION__: string | undefined;
 
-const defaultModelId = 'gpt-4o';
-
 let config: Config | undefined;
 
-/** Return config */
-export async function getConfig(): Promise<Config> {
+/** Return config
+ *
+ * set refreshWorkspace to refresh workspace / git configuration and ask user to select from multiple roots if needed
+ */
+export async function getConfig(options?: {
+    refreshWorkspace?: boolean;
+}): Promise<Config> {
     if (!config) {
         config = await initializeConfig();
+    } else if (options?.refreshWorkspace) {
+        config.logger.debug('Refreshing workspace configuration...');
+        const { workspaceRoot, git, gitRoot } = await getWorkspaceConfig();
+        config.workspaceRoot = workspaceRoot;
+        config.git = git;
+        config.gitRoot = gitRoot;
     }
     return config;
 }
 
 async function initializeConfig(): Promise<Config> {
-    const logger = new LgtmLogger(getOptions().enableDebugOutput);
+    const logger = new CodeReviewLogger(getOptions().enableDebugOutput);
     if (__GIT_VERSION__) {
-        logger.info(`**LGTM dev build**: ${__GIT_VERSION__}`);
+        logger.info(`**Code Review dev build**: ${__GIT_VERSION__}`);
     }
 
-    let mainWorkspace = vscode.workspace.workspaceFolders?.[0];
-    if ((vscode.workspace.workspaceFolders?.length || 0) > 1) {
-        //if there are multiple workspaces, ask the user to select one
-        mainWorkspace = await vscode.window.showWorkspaceFolderPick();
-    }
+    const { workspaceRoot, git, gitRoot } = await getWorkspaceConfig();
 
-    if (!mainWorkspace) {
-        throw new Error(
-            'No workspace found. Please open a folder containing a Git repository using `File -> Open Folder`.'
-        );
-    }
+    // Session-scoped model overrides (not persisted to settings)
+    let sessionModelIds: string[] = [];
 
-    const workspaceRoot = mainWorkspace.uri.fsPath;
-    let git;
-    try {
-        git = await createGit(workspaceRoot);
-    } catch (error) {
-        const message =
-            error instanceof Error ? '\n\n```\n' + error.message + '\n```' : '';
-        throw new Error(
-            'Error opening Git repository. Please open a folder containing a Git repository using `File -> Open Folder` and make sure Git is installed.' +
-                message
-        );
-    }
     const config = {
         git,
         workspaceRoot,
-        gitRoot: git.getGitRoot(),
-        getModel: () => loadModel(getOptions().chatModel, logger),
+        gitRoot,
+        getModel: (modelId?: string) => {
+            const id = modelId ?? sessionModelIds[0] ?? getOptions().chatModel;
+            return loadReviewProvider(id);
+        },
+        promptForSessionModelIds: async () => {
+            const selectedModelIds = await promptForModelSelection(
+                sessionModelIds.length > 0
+                    ? sessionModelIds
+                    : [getOptions().chatModel]
+            );
+            if (selectedModelIds && selectedModelIds.length > 0) {
+                sessionModelIds = selectedModelIds;
+                logger.debug(
+                    `Session models set to: ${sessionModelIds.join(', ')}`
+                );
+                return selectedModelIds;
+            }
+            return undefined;
+        },
+        promptForSessionModel: async () => {
+            const selectedModelIds = await config.promptForSessionModelIds();
+            return (selectedModelIds?.length ?? 0) > 0;
+        },
         getOptions,
+        setOption,
         logger,
     };
 
     vscode.workspace.onDidChangeConfiguration((ev) => {
-        if (!ev.affectsConfiguration('lgtm')) {
+        if (!ev.affectsConfiguration('codeReview')) {
             return;
         }
         config.logger.debug('Updating config...');
@@ -72,81 +97,152 @@ async function initializeConfig(): Promise<Config> {
     return config;
 }
 
-/** get desired chat model.
+async function getWorkspaceConfig(): Promise<{
+    workspaceRoot: string;
+    git: Git;
+    gitRoot: string;
+}> {
+    let mainWorkspace = vscode.workspace.workspaceFolders?.[0];
+    if ((vscode.workspace.workspaceFolders?.length || 0) > 1) {
+        //if there are multiple workspaces, ask the user to select one
+        mainWorkspace = await vscode.window.showWorkspaceFolderPick();
+    }
+
+    if (!mainWorkspace) {
+        throw new Error(
+            'No workspace found or selected. Please open a folder containing a Git repository using `File -> Open Folder`.'
+        );
+    }
+
+    const workspaceRoot = mainWorkspace.uri.fsPath;
+    let git: Git;
+    try {
+        git = await createGit(workspaceRoot);
+    } catch (error) {
+        const message =
+            error instanceof Error
+                ? `\n\n\`\`\`\n${error.message}\n\`\`\``
+                : '';
+        throw new Error(
+            'Error opening Git repository. Please open a folder containing a Git repository using `File -> Open Folder` and make sure Git is installed.' +
+                message
+        );
+    }
+    const gitRoot = git.getGitRoot();
+    return { workspaceRoot, git, gitRoot };
+}
+
+/** get desired review provider.
  *
  * If the model is not available, shows an error toast with possible options.
+ * Note that this is rather slow (~1 sec), avoid repeated calls.
  */
-async function loadModel(modelId: string, logger: Logger): Promise<Model> {
-    logger.debug(`Loading chat model: ${modelId}`);
+async function loadReviewProvider(modelId: string): Promise<Model> {
+    const { logger } = await getConfig();
+    logger.debug(`Loading review provider: ${modelId}`);
+
+    if (isCopilotCodeReviewProviderId(modelId)) {
+        throw new Error(
+            'Copilot Code Review is a special review provider and cannot be loaded as a chat model.'
+        );
+    }
+
     try {
-        return await getChatModel(modelId, logger);
+        return await getChatModel(modelId);
     } catch (error) {
         const errorMessage =
-            error instanceof Error ? error.message : 'Error loading chat model';
+            error instanceof Error
+                ? error.message
+                : 'Error loading review provider';
         logger.info(
-            `[Error] Failed to load chat model (was trying ${modelId}): ${errorMessage}`
+            `[Error] Failed to load review provider (was trying ${modelId}): ${errorMessage}`
         );
 
         const resetToDefaultOption = `Reset to Default (${defaultModelId})`;
-        const selectChatModelOption = 'Select Chat Model';
+        const useFallbackOption = `Switch to ${defaultFallbackModelName}`;
+        const selectChatModelOption = 'Select Review Provider';
         const options = [selectChatModelOption];
         if (modelId !== defaultModelId) {
+            // a non-default model failed (incl. a failed fallback): offer to
+            // reset to the default
             options.unshift(resetToDefaultOption);
+        } else {
+            // the default itself is unavailable (e.g. gpt-5.5 on free plans):
+            // offer the broadly-available fallback and persist the choice
+            options.unshift(useFallbackOption);
         }
 
         // Notify the user
         const option = await vscode.window.showErrorMessage(
-            `Failed to load chat model '${modelId}'. Reason: ${errorMessage}\nDo you want to reset to the default model or select a different one?`,
+            `Failed to load review provider '${modelId}'. Reason: ${errorMessage}\nDo you want to switch to a different provider?`,
             ...options
         );
 
         if (option === resetToDefaultOption) {
-            await vscode.workspace
-                .getConfiguration('lgtm')
-                .update(
-                    'chatModel',
-                    defaultModelId,
-                    vscode.ConfigurationTarget.Global
-                );
-            logger.info(`Chat model reset to default: ${defaultModelId}`);
-            return await loadModel(defaultModelId, logger);
+            await setOption('chatModel', defaultModelId);
+            logger.info(`Review provider reset to default: ${defaultModelId}`);
+            return await loadReviewProvider(defaultModelId);
+        } else if (option === useFallbackOption) {
+            await setOption('chatModel', defaultFallbackModelId);
+            logger.info(
+                `Review provider switched to fallback: ${defaultFallbackModelId}`
+            );
+            return await loadReviewProvider(defaultFallbackModelId);
         } else if (option === selectChatModelOption) {
-            await vscode.commands.executeCommand('lgtm.selectChatModel');
-            return await loadModel(getOptions().chatModel, logger);
+            await vscode.commands.executeCommand('codeReview.selectChatModel');
+            return await loadReviewProvider(getOptions().chatModel);
         }
 
         throw new Error(
-            `Couldn't find chat model. Please ensure the lgtm.chatModel setting is set to an available model ID. You can use the 'LGTM: Select Chat Model' command to pick one.`
+            `Couldn't find review model/provider. Please ensure the codeReview.chatModel setting is set to an available ID. You can use the 'Code Review: Select Review Model' command to pick one.`
         );
     }
 }
 
-/** Converts file path relative to gitRoot to a vscode.Uri */
-export function toUri(config: Config, file: string): vscode.Uri {
-    return vscode.Uri.file(config.gitRoot + '/' + file);
-}
-
 function getOptions(): Options {
-    const config = vscode.workspace.getConfiguration('lgtm');
+    const config = vscode.workspace.getConfiguration('codeReview');
 
     const minSeverity = config.get<number>('minSeverity', 1);
     const customPrompt = config.get<string>('customPrompt', '');
+    const contextFiles = config.get<string[]>('contextFiles', ['AGENTS.md']);
     const excludeGlobs = config.get<string[]>('exclude', []);
     const enableDebugOutput = config.get<boolean>('enableDebugOutput', false);
     const chatModel = config.get<string>('chatModel', defaultModelId);
-    const mergeFileReviewRequests = config.get<boolean>(
-        'mergeFileReviewRequests',
-        true
+    const preferredModels = config.get<string[]>(
+        'preferredModels',
+        defaultPreferredModelIds
+    );
+    const selectChatModelForReview = config.get<ChatModelOnNewPromptType>(
+        'selectChatModelForReview',
+        'Use default'
+    );
+    const outputModeWithMultipleModels = config.get<ReviewFlowType>(
+        'outputModeWithMultipleModels',
+        'Separate sections'
     );
     let maxInputTokensFraction = config.get<number>(
         'maxInputTokensFraction',
-        0.95
+        0.8
     );
     if (maxInputTokensFraction > 0.95) {
         maxInputTokensFraction = 0.95;
     } else if (maxInputTokensFraction < 0.05) {
         maxInputTokensFraction = 0.05;
     }
+    const maxConcurrentModelRequests = config.get<number>(
+        'maxConcurrentModelRequests',
+        4
+    );
+    const saveOutputToFile = config.get<boolean>('saveOutputToFile', false);
+    const autoCheckoutTarget = config.get<AutoCheckoutTargetType>(
+        'autoCheckoutTarget',
+        'ask'
+    );
+    const includeDeletedFiles = config.get<boolean>(
+        'includeDeletedFiles',
+        true
+    );
+
     // hidden experimental setting for comparing prompts. Comma-separated list of prompt types to compare.
     // if empty, will only create a single review using the default prompt type.
     const comparePromptTypes = config.get<string>('comparePromptTypes');
@@ -154,11 +250,78 @@ function getOptions(): Options {
     return {
         minSeverity,
         customPrompt,
+        contextFiles,
         excludeGlobs,
         enableDebugOutput,
         chatModel,
-        mergeFileReviewRequests,
+        preferredModels,
+        selectChatModelForReview,
+        outputModeWithMultipleModels,
         maxInputTokensFraction,
+        maxConcurrentModelRequests,
         comparePromptTypes,
+        saveOutputToFile,
+        autoCheckoutTarget,
+        includeDeletedFiles,
     };
+}
+
+async function setOption<T extends keyof Options>(
+    option: T,
+    value: Options[T]
+) {
+    const cfg = vscode.workspace.getConfiguration('codeReview');
+    const inspection = cfg.inspect(option);
+    let target = vscode.ConfigurationTarget.Global;
+    if (inspection?.workspaceFolderValue !== undefined) {
+        target = vscode.ConfigurationTarget.WorkspaceFolder;
+    } else if (inspection?.workspaceValue !== undefined) {
+        target = vscode.ConfigurationTarget.Workspace;
+    }
+    await cfg.update(option, value, target);
+}
+
+/**
+ * Prompt the user to select one or more models for the current session.
+ * Returns an array of selected model IDs (in "vendor:id" format) or undefined if cancelled.
+ */
+async function promptForModelSelection(
+    currentModelIds: string[]
+): Promise<string[] | undefined> {
+    const models = await vscode.lm.selectChatModels();
+    const quickPickItems = getModelQuickPickItems(models ?? []);
+
+    const itemsWithSelectionState = quickPickItems.map((item) => {
+        if (item.kind === vscode.QuickPickItemKind.Separator) return item;
+
+        const isPicked = currentModelIds.some((modelId) => {
+            if (!item.providerId) {
+                return false;
+            }
+
+            return (
+                modelId === item.providerId ||
+                modelId === item.modelIdWithVendor ||
+                modelId === item.id
+            );
+        });
+
+        return { ...item, picked: isPicked };
+    });
+    const selectedItems = await vscode.window.showQuickPick(
+        itemsWithSelectionState,
+        {
+            placeHolder:
+                'Select one or more review providers for this review (use Space to select multiple)',
+            canPickMany: true,
+        }
+    );
+
+    if (!selectedItems || selectedItems.length === 0) {
+        return undefined;
+    }
+
+    return selectedItems
+        .filter((item) => item.providerId !== undefined)
+        .map((item) => item.providerId as string);
 }

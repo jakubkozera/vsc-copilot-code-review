@@ -1,31 +1,67 @@
-import type { CancellationToken, Progress } from 'vscode';
+import type { CancellationToken } from 'vscode';
 
-import { Config } from '@/types/Config';
+import type { Config } from '@/types/Config';
+import type { DiffFile } from '@/types/DiffFile';
 import { ModelError } from '@/types/ModelError';
-import { ReviewComment } from '@/types/ReviewComment';
-import { ReviewRequest } from '@/types/ReviewRequest';
-import { ReviewResult } from '@/types/ReviewResult';
+import type { PromptType } from '@/types/PromptType';
+import type { ReviewComment } from '@/types/ReviewComment';
+import type { ReviewContextFile } from '@/types/ReviewContextFile';
+import type { ReviewProgress } from '@/types/ReviewProgress';
+import type { ReviewRequest } from '@/types/ReviewRequest';
+import type { ReviewResult } from '@/types/ReviewResult';
+import { parallelLimit } from '@/utils/async';
 import { correctFilename } from '@/utils/filenames';
-import { DiffFile } from '@/utils/git';
 import { isPathNotExcluded } from '@/utils/glob';
-import type { PromptType } from '../types/PromptType';
+import { isCopilotCodeReviewProviderId } from '@/utils/reviewProvider';
+import { saveToFile } from '@/utils/saveToFile';
 import { parseResponse, sortFileCommentsBySeverity } from './comment';
+import { loadReviewContextFiles } from './contextFiles';
+import { reviewDiffWithCopilotCodeReview } from './copilotCodeReview';
+import { formatGatheringFilesMessage } from './formatGatheringFilesMessage';
 import { ModelRequest } from './ModelRequest';
 import { defaultPromptType, toPromptTypes } from './prompt';
+
+type ReviewDiffOptions = {
+    providerId?: string;
+    progress?: ReviewProgress;
+    cancellationToken?: CancellationToken;
+};
 
 export async function reviewDiff(
     config: Config,
     request: ReviewRequest,
-    progress?: Progress<{ message?: string; increment?: number }>,
-    cancellationToken?: CancellationToken
+    options?: ReviewDiffOptions
 ): Promise<ReviewResult> {
+    const providerId = options?.providerId ?? config.getOptions().chatModel;
+    const progress = options?.progress;
+    const cancellationToken = options?.cancellationToken;
     const diffFiles = await config.git.getChangedFiles(request.scope);
-    const options = config.getOptions();
+    const reviewOptions = config.getOptions();
     const files = diffFiles.filter(
         (file) =>
-            isPathNotExcluded(file.file, options.excludeGlobs) &&
-            file.status !== 'D' // ignore deleted files
+            isPathNotExcluded(file.file, reviewOptions.excludeGlobs) &&
+            (reviewOptions.includeDeletedFiles || file.status !== 'D')
     );
+
+    if (isCopilotCodeReviewProviderId(providerId)) {
+        const result = await reviewDiffWithCopilotCodeReview(
+            config,
+            request,
+            files,
+            progress,
+            cancellationToken
+        );
+
+        if (reviewOptions.saveOutputToFile) {
+            saveToFile(config, result);
+        }
+
+        return result;
+    }
+
+    const configuredContextFiles =
+        request.contextFilesOverride ?? reviewOptions.contextFiles;
+    const contextFiles = await loadReviewContextFiles(configuredContextFiles);
 
     //TODO reorder to get relevant input files together, e.g.
     // order by distance: file move < main+test < same dir (levenshtein) < parent dir (levenshtein) < ...
@@ -33,6 +69,7 @@ export async function reviewDiff(
     const modelRequests = await aggregateFileDiffs(
         config,
         request,
+        contextFiles,
         files,
         progress,
         cancellationToken
@@ -53,20 +90,30 @@ export async function reviewDiff(
         comments,
     }));
 
-    return {
+    const result: ReviewResult = {
         request,
+        files,
         fileComments: sortFileCommentsBySeverity(fileComments),
         errors,
     };
+
+    // Save to file if the setting is enabled
+    if (reviewOptions.saveOutputToFile) {
+        saveToFile(config, result);
+    }
+
+    return result;
 }
 
 async function aggregateFileDiffs(
     config: Config,
     request: ReviewRequest,
+    contextFiles: ReviewContextFile[],
     files: DiffFile[],
-    progress?: Progress<{ message?: string; increment?: number }>,
+    progress?: ReviewProgress,
     cancellationToken?: CancellationToken
 ) {
+    const model = await config.getModel();
     const options = config.getOptions();
     const modelRequests: ModelRequest[] = [];
     for (const file of files) {
@@ -75,7 +122,7 @@ async function aggregateFileDiffs(
         }
 
         progress?.report({
-            message: `Gathering changes for ${files.length} files...`,
+            message: formatGatheringFilesMessage(files),
             increment: 100 / files.length,
         });
 
@@ -87,10 +134,13 @@ async function aggregateFileDiffs(
         config.logger.debug(`Diff for ${file.file}:`, diff);
 
         // if merging is off, create a new request for each file
-        if (modelRequests.length === 0 || !options.mergeFileReviewRequests) {
+        if (modelRequests.length === 0) {
             const modelRequest = new ModelRequest(
-                config,
-                request.scope.changeDescription
+                model,
+                options,
+                config.logger,
+                request.scope.changeDescription,
+                contextFiles.map((contextFile) => ({ ...contextFile }))
             );
             modelRequests.push(modelRequest);
         }
@@ -104,8 +154,11 @@ async function aggregateFileDiffs(
         } catch {
             // if the diff cannot be added to the last request, create a new one
             const modelRequest = new ModelRequest(
-                config,
-                request.scope.changeDescription
+                model,
+                options,
+                config.logger,
+                request.scope.changeDescription,
+                contextFiles.map((contextFile) => ({ ...contextFile }))
             );
             await modelRequest.addDiff(file.file, diff); // adding the first diff will never throw
             modelRequests.push(modelRequest);
@@ -117,15 +170,22 @@ async function aggregateFileDiffs(
 async function generateReviewComments(
     config: Config,
     modelRequests: ModelRequest[],
-    progress?: Progress<{ message?: string; increment?: number }>,
+    progress?: ReviewProgress,
     cancellationToken?: CancellationToken
 ) {
-    const promptTypes = toPromptTypes(config.getOptions().comparePromptTypes);
+    const options = config.getOptions();
+    const promptTypes = toPromptTypes(options.comparePromptTypes);
 
     const totalRequests = modelRequests.length * promptTypes.length;
     let requestCounter = 0;
     const updateProgress = () => {
         requestCounter++;
+        if (
+            requestCounter <
+            Math.min(options.maxConcurrentModelRequests, totalRequests)
+        ) {
+            return; // no need to update on the first N - 1 requests started at the same time
+        }
         const isSingle = totalRequests <= 1;
         const increment = isSingle ? -100 : 100 / totalRequests;
         const message = isSingle
@@ -134,36 +194,48 @@ async function generateReviewComments(
         progress?.report({ message, increment });
     };
 
-    const errors = [];
+    const errors: Error[] = [];
     const commentsPerFile = new Map<string, ReviewComment[]>();
-    for (const modelRequest of modelRequests) {
-        for (const promptType of promptTypes) {
-            if (cancellationToken?.isCancellationRequested) {
-                return { commentsPerFile, errors };
-            }
+    const startRequest = async (
+        modelRequest: ModelRequest,
+        promptType?: PromptType
+    ) => {
+        if (cancellationToken?.isCancellationRequested) {
+            return;
+        }
+        updateProgress();
 
-            updateProgress();
-            try {
-                await processRequest(
-                    config,
-                    modelRequest,
-                    commentsPerFile,
-                    promptType,
-                    cancellationToken
-                );
-            } catch (error) {
-                // it's entirely possible that something bad happened for a request, let's store the error and continue if possible
-                if (error instanceof ModelError) {
-                    errors.push(error);
-                    // would also fail for the remaining files
-                    return { commentsPerFile, errors };
-                } else if (error instanceof Error) {
-                    errors.push(error);
-                    continue;
-                }
-                continue;
+        try {
+            await processRequest(
+                config,
+                modelRequest,
+                commentsPerFile,
+                promptType,
+                cancellationToken
+            );
+        } catch (error) {
+            // it's entirely possible that something bad happened for a request, let's store the error and continue if possible
+            if (error instanceof ModelError) {
+                errors.push(error);
+                // would also fail for the remaining files
+                throw error;
+            } else if (error instanceof Error) {
+                errors.push(error);
             }
         }
+    };
+
+    const tasks = [];
+    for (const modelRequest of modelRequests) {
+        for (const promptType of promptTypes) {
+            tasks.push(() => startRequest(modelRequest, promptType));
+        }
+    }
+
+    try {
+        await parallelLimit(tasks, options.maxConcurrentModelRequests);
+    } catch {
+        // error already in `errors` array, proceed normally
     }
 
     return { commentsPerFile, errors };
@@ -181,7 +253,11 @@ async function processRequest(
         await modelRequest.sendRequest(cancellationToken, promptType);
     const reviewDuration = Date.now() - reviewStart;
     config.logger.debug(
-        `Received review response. Took=${reviewDuration}ms, Files=${modelRequest.files.length}, prompt type=${promptType ?? defaultPromptType}, request tokens=${promptTokens}, response tokens=${responseTokens}, Response=${response}`
+        `Received review response. Took=${reviewDuration}ms, Files=${
+            modelRequest.files.length
+        }, prompt type=${
+            promptType ?? defaultPromptType
+        }, request tokens=${promptTokens}, response tokens=${responseTokens}, Response=${response}`
     );
 
     const comments = parseResponse(response);

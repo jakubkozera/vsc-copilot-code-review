@@ -3,13 +3,13 @@
   "displayName": "Github Copilot Code Reviewer",
   "description": "Review source code changes in Git using GitHub Copilot",
   "publisher": "jakubkozera",
-  "version": "0.22.2",
+  "version": "1.0.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/jakubkozera/vsc-copilot-code-review"
   },
   "engines": {
-    "vscode": "^1.99.1"
+    "vscode": "^1.125.0"
   },
   "categories": [
     "AI",
@@ -22,59 +22,173 @@
     "chat",
     "copilot",
     "git",
-    "review"
+    "review",
+    "pull request",
+    "bitbucket"
   ],
   "icon": "images/icon.png",
   "license": "SEE LICENSE IN LICENSE",
-  "activationEvents": [],
+  "activationEvents": [
+    "onChatParticipant:codereview"
+  ],
   "main": "./out/extension.js",
   "enabledApiProposals": [],
   "contributes": {
     "commands": [
       {
         "command": "codeReview.selectChatModel",
-        "title": "Select Chat Model",
-        "category": "codeReview"
+        "title": "Select Review Model...",
+        "category": "Code Review"
+      },
+      {
+        "command": "codeReview.startCodeReview",
+        "title": "Start Code Review...",
+        "category": "Code Review",
+        "icon": {
+          "light": "images/icon.png",
+          "dark": "images/icon.png"
+        }
+      },
+      {
+        "command": "codeReview.reviewStagedChanges",
+        "title": "Review Staged Changes",
+        "category": "Code Review",
+        "icon": {
+          "light": "images/icon.png",
+          "dark": "images/icon.png"
+        }
+      },
+      {
+        "command": "codeReview.reviewUnstagedChanges",
+        "title": "Review Unstaged Changes",
+        "category": "Code Review",
+        "icon": {
+          "light": "images/icon.png",
+          "dark": "images/icon.png"
+        }
+      },
+      {
+        "command": "codeReview.reviewPullRequest",
+        "title": "Review Pull Request",
+        "category": "Code Review",
+        "icon": {
+          "light": "images/icon.png",
+          "dark": "images/icon.png"
+        }
+      },
+      {
+        "command": "codeReview.reviewChanges",
+        "title": "Review Changes",
+        "category": "Code Review"
       },
       {
         "command": "codeReview.openCodeReviewPanel",
         "title": "Open Code Review Panel",
-        "category": "codeReview"
+        "category": "Code Review"
       },
       {
         "command": "codeReview.refreshCodeReview",
         "title": "Refresh",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "codeReview.reviewCommittedChanges",
-        "title": "Review Committed Changes",
-        "icon": "$(git-commit)"
-      },
-      {
-        "command": "codeReview.reviewAllChanges",
-        "title": "Review All Changes",
-        "icon": "$(git-branch)"
+        "icon": "$(refresh)",
+        "category": "Code Review"
       },
       {
         "command": "codeReview.nextComment",
         "title": "Next Comment",
-        "category": "codeReview",
+        "category": "Code Review",
         "icon": "$(arrow-right)"
       },
       {
         "command": "codeReview.previousComment",
-        "title": "Previous Comment", 
-        "category": "codeReview",
+        "title": "Previous Comment",
+        "category": "Code Review",
         "icon": "$(arrow-left)"
       },
       {
         "command": "codeReview.applyCurrentAdjustment",
         "title": "Apply Fix",
-        "category": "codeReview",
+        "category": "Code Review",
         "icon": "$(wand)"
       }
     ],
+    "menus": {
+      "scm/resourceGroup/context": [
+        {
+          "command": "codeReview.reviewStagedChanges",
+          "when": "scmProvider == git && scmResourceGroup == index",
+          "group": "inline@-3"
+        },
+        {
+          "command": "codeReview.reviewUnstagedChanges",
+          "when": "scmProvider == git && scmResourceGroup == workingTree",
+          "group": "inline@-3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codeReview.reviewPullRequest",
+          "when": "(view == atlascode.views.bb.pullrequestsTreeView && viewItem == pullrequest && !treeElementHasParent) || (view == pr:github && viewItem =~ /pullrequest/)",
+          "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "codeReview.reviewPullRequest",
+          "when": "false"
+        },
+        {
+          "command": "codeReview.reviewChanges",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "codeReview.refreshCodeReview",
+          "when": "view == codeReview.codeReview",
+          "group": "navigation"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "codeReview.previousComment",
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@1",
+          "icon": "$(arrow-left)"
+        },
+        {
+          "command": "codeReview.nextComment",
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@2",
+          "icon": "$(arrow-right)"
+        },
+        {
+          "command": "codeReview.applyCurrentAdjustment",
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@3",
+          "icon": "$(wand)"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "codeReview.previousComment",
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@1",
+          "icon": "$(arrow-left)"
+        },
+        {
+          "command": "codeReview.nextComment",
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@2",
+          "icon": "$(arrow-right)"
+        },
+        {
+          "command": "codeReview.applyCurrentAdjustment",
+          "when": "commentThread == codeReview-review",
+          "group": "navigation@3",
+          "icon": "$(wand)"
+        }
+      ]
+    },
     "chatParticipants": [
       {
         "id": "codereview",
@@ -85,15 +199,7 @@
         "commands": [
           {
             "name": "review",
-            "description": "Review changes between two branches, commits, or tags.  You can specify git refs using e.g. `/review develop main`, or omit the second or both arguments to select refs interactively."
-          },
-          {
-            "name": "branch",
-            "description": "Review changes between two branches."
-          },
-          {
-            "name": "commit",
-            "description": "Review changes in a single commit."
+            "description": "Review changes. Specify branches, commits, or tags, e.g. `/review develop main`. Use `model:id` to select review providers inline, including `model:copilot-code-review`. Use `context:path` to override attached context files or `context:none` to disable them for one review. Leave empty for interactive."
           }
         ]
       }
@@ -159,84 +265,8 @@
         }
       }
     ],
-    "views": {
-      "scm": [
-        {
-          "id": "codeReview.codeReview",
-          "name": "Copilot Code Review",
-          "when": "scmProvider == git",
-          "type": "webview"
-        }
-      ]
-    },
-    "viewsContainers": {
-      "activitybar": []
-    },
-    "menus": {
-      "view/title": [
-        {
-          "command": "codeReview.refreshCodeReview",
-          "when": "view == codeReview.codeReview",
-          "group": "navigation"
-        }
-      ],
-      "comments/commentThread/context": [
-        {
-          "command": "codeReview.previousComment",
-          "when": "commentThread == codeReview-review",
-          "group": "navigation@1",
-          "icon": "$(arrow-left)"
-        },
-        {
-          "command": "codeReview.nextComment", 
-          "when": "commentThread == codeReview-review",
-          "group": "navigation@2", 
-          "icon": "$(arrow-right)"
-        },
-        {
-          "command": "codeReview.applyCurrentAdjustment",
-          "when": "commentThread == codeReview-review",
-          "group": "navigation@3",
-          "icon": "$(wand)"
-        }
-      ],
-      "comments/commentThread/title": [
-        {
-          "command": "codeReview.previousComment",
-          "when": "commentThread == codeReview-review",
-          "group": "navigation@1",
-          "icon": "$(arrow-left)"
-        },
-        {
-          "command": "codeReview.nextComment", 
-          "when": "commentThread == codeReview-review",
-          "group": "navigation@2",
-          "icon": "$(arrow-right)"
-        },
-        {
-          "command": "codeReview.applyCurrentAdjustment",
-          "when": "commentThread == codeReview-review",
-          "group": "navigation@3",
-          "icon": "$(wand)"
-        }
-      ]
-    },
-    "keybindings": [
-      {
-        "command": "codeReview.nextComment",
-        "key": "ctrl+shift+n",
-        "mac": "cmd+shift+n",
-        "when": "commentController == codeReview-comments"
-      },
-      {
-        "command": "codeReview.previousComment", 
-        "key": "ctrl+shift+b",
-        "mac": "cmd+shift+b",
-        "when": "commentController == codeReview-comments"
-      }
-    ],
     "configuration": {
-      "title": "codeReview",
+      "title": "Code Review",
       "properties": {
         "codeReview.minSeverity": {
           "type": "number",
@@ -250,6 +280,16 @@
           "default": "",
           "description": "Add custom text to the review prompt. For example, \"- In the final JSON output, use Spanish for the  `comment` field.\"",
           "editPresentation": "multilineText"
+        },
+        "codeReview.contextFiles": {
+          "type": "array",
+          "default": [
+            "AGENTS.md"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Workspace-relative files to attach as extra codebase context on every review request. Set this to an empty list to attach no extra context by default. Prefer models with larger context windows for this setting: each additional file sends more tokens, which can easily fill the context window and degrade review quality rather than improve it."
         },
         "codeReview.exclude": {
           "type": "array",
@@ -267,65 +307,153 @@
         "codeReview.enableDebugOutput": {
           "type": "boolean",
           "default": false,
-          "description": "Log debug output to Output Panel > codeReview."
+          "description": "Log debug output to Output Panel > Code Review."
         },
         "codeReview.chatModel": {
           "type": "string",
-          "default": "gpt-4o",
-          "markdownDescription": "Chat model ID to use for generating review comments. Note that non-default models may not be available, may require changes to the [Copilot settings](https://github.com/settings/copilot), or have stricter rate limits. (EXPERIMENTAL). Use the 'codeReview: Select Chat Model' command to choose from available models."
+          "default": "copilot:gpt-5.5",
+          "markdownDescription": "Default review provider to use for generating review comments. Use the 'Code Review: Select Review Model' command to choose from available models or the special `copilot-code-review` provider. Note that non-default models may not be available, may require changes to the [Copilot settings](https://github.com/settings/copilot), or have stricter rate limits."
         },
-        "codeReview.mergeFileReviewRequests": {
-          "type": "boolean",
-          "default": true,
-          "description": "Review changes for multiple files in one request. This improves the model's understanding of the context of individual changes and speeds up reviews. Disabling this will lose these advantages, but can be useful for a very detailed line-by-line review."
+        "codeReview.preferredModels": {
+          "type": "array",
+          "default": [
+            "copilot:claude-sonnet-4.6",
+            "copilot:claude-sonnet-5",
+            "copilot:gpt-5.5",
+            "claude-model-provider:claude-sonnet-4-6",
+            "claude-model-provider:claude-sonnet-5"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Review providers to prioritize in the picker. The current `codeReview.chatModel` is always added to the Preferred Models section automatically. Entries that are unavailable or unsupported are ignored, and preferred providers are omitted from the other sections."
+        },
+        "codeReview.selectChatModelForReview": {
+          "type": "string",
+          "enum": [
+            "Use default",
+            "Always ask"
+          ],
+          "default": "Use default",
+          "enumDescriptions": [
+            "Use the provider defined in 'Chat Model'",
+            "Always ask which review provider to use when starting a new prompt (supports multi-selection)"
+          ],
+          "markdownDescription": "Controls which review provider to use when starting a new review prompt. When set to 'Always ask', you can select multiple models and/or Copilot Code Review to compare their results."
+        },
+        "codeReview.outputModeWithMultipleModels": {
+          "type": "string",
+          "enum": [
+            "Separate sections",
+            "Merged with attribution"
+          ],
+          "default": "Separate sections",
+          "enumDescriptions": [
+            "Show each model's results in separate sections with headings",
+            "Merge results from all models, showing which model(s) flagged each issue"
+          ],
+          "markdownDescription": "Controls how results are displayed when using multiple models for review."
         },
         "codeReview.maxInputTokensFraction": {
           "type": "number",
-          "default": 0.95,
-          "description": "Fraction of the chat model's input token limit to use for requests. Lower values may increase quality of e.g. function level comments, but reduce the available context; higher values may improve the models understanding on how different changes relate to each other. The maximum allowed value is 0.95 to avoid token limit errors.",
+          "default": 0.8,
+          "description": "Fraction of the model's input token limit to use for requests. Lower values may increase quality of e.g. function level comments, but reduce the available context; higher values may improve the model's understanding on how different changes relate to each other. The maximum allowed value is 0.95 to avoid token limit errors.",
           "minimum": 0.05,
           "maximum": 0.95
+        },
+        "codeReview.maxConcurrentModelRequests": {
+          "type": "number",
+          "default": 4,
+          "description": "Maximum number of concurrent requests to the model. Increase this to speed up reviews, but be aware that this may lead to rate limiting by the model provider.",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "codeReview.saveOutputToFile": {
+          "type": "boolean",
+          "default": false,
+          "description": "Save ReviewResult to JSON file for debugging purposes. Files are saved to .codereview-debug/ directory in workspace root."
+        },
+        "codeReview.autoCheckoutTarget": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "default": "ask",
+          "enumDescriptions": [
+            "Ask each time whether to check out the target ref",
+            "Always check out the target ref automatically",
+            "Never check out the target ref automatically"
+          ],
+          "description": "Controls whether to automatically check out the target ref when it's not currently checked out. Checking out enables code navigation and fixes."
+        },
+        "codeReview.includeDeletedFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include the content of deleted files in reviews. Consumes more tokens, but may provide more context. If disabled, deleted files are skipped entirely."
         }
       }
-    }
+    },
+    "views": {
+      "scm": [
+        {
+          "id": "codeReview.codeReview",
+          "name": "Copilot Code Review",
+          "when": "scmProvider == git",
+          "type": "webview"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": []
+    },
+    "keybindings": [
+      {
+        "command": "codeReview.nextComment",
+        "key": "ctrl+shift+n",
+        "mac": "cmd+shift+n",
+        "when": "commentController == codeReview-comments"
+      },
+      {
+        "command": "codeReview.previousComment",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b",
+        "when": "commentController == codeReview-comments"
+      }
+    ]
   },
   "scripts": {
-    "preinstall": "npx only-allow pnpm",
     "check-exclusive": "ps aux | grep -v grep | grep -q 'esbuild.*--watch' && echo 'esbuild --watch running, aborting!' && exit 1 || exit 0",
     "vscode:prepublish": "pnpm check-exclusive && rm -rf ./out && pnpm esbuild-base --minify --pure:console.debug",
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --define:__GIT_VERSION__=\\\"$GIT_VERSION\\\"",
-    "esbuild": "pnpm esbuild-base --sourcemap",
     "watch": "pnpm esbuild-base --sourcemap --watch",
     "dev": "GIT_VERSION=$(git describe  --tags --long) pnpm build",
-    "build": "npx vsce package --no-dependencies",
-    "lint": "tsc --noEmit && eslint src && prettier src --check",
+    "build": "pnpm exec vsce package --no-dependencies",
+    "format": "pnpm exec biome check --write src/",
+    "lint": "tsc --noEmit && pnpm exec biome check src/",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "checkall": "pnpm test && pnpm lint && pnpm build"
   },
   "devDependencies": {
-    "@eslint/js": "^9.31.0",
-    "@types/node": "22.x",
-    "@types/vscode": "^1.99.1",
-    "@vitest/coverage-v8": "^3.2.4",
-    "@vscode/vsce": "^3.6.0",
-    "esbuild": "^0.25.6",
-    "eslint": "^9.31.0",
-    "prettier": "^3.6.2",
-    "typescript": "^5.8.3",
-    "typescript-eslint": "^8.36.0",
-    "vitest": "^3.2.4"
+    "@biomejs/biome": "2.4.16",
+    "@types/node": "24.x",
+    "@types/vscode": "1.125.0",
+    "@vitest/coverage-v8": "^5.0.5",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
   },
   "dependencies": {
     "fastest-levenshtein": "^1.0.16",
     "jsonc-parser": "^3.3.1",
-    "minimatch": "^10.0.3",
-    "simple-git": "^3.28.0"
+    "minimatch": "^10.2.6",
+    "simple-git": "^4.0.2"
   },
   "extensionDependencies": [
     "github.copilot-chat"
   ],
-  "pnpm": {
-    "overrides": {}
-  }
+  "packageManager": "pnpm@12.10.1"
 }

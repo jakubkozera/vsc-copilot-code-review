@@ -1,5 +1,20 @@
 # Change Log
 
+## [1.0.0]
+Synced with upstream [cpulvermacher/lgtm](https://github.com/cpulvermacher/lgtm) 1.9.1.
+
+- Breaking: all commands, settings, and the chat participant now use the `codeReview` namespace (e.g. `codeReview.chatModel`, `@codereview`). `/branch` and `/commit` chat commands were removed, use `/review` or `Code Review: Start Code Review...`.
+- Fixed `command 'lgtm.selectChatModel' not found` and `Couldn't find chat model` errors caused by leftover `lgtm` identifiers.
+- Added `Code Review: Start Code Review...`, `Review Staged Changes`, `Review Unstaged Changes` commands and Source Control buttons.
+- Added pull request review for the GitHub Pull Requests and Bitbucket extensions.
+- Added review model selection (including multiple models and Copilot Code Review as provider), `model:` and `context:` chat arguments, and project context files (`AGENTS.md`).
+- Added chat `Fix` action, auto checkout of the review target, and `codeReview.reviewChanges` command for programmatic use.
+- Default model is now GPT-5.5; falls back to another model if unavailable. Detect empty model responses.
+- Show comments on deleted files, include deleted files in reviews, skip binary files.
+- Security: `--end-of-options` for git calls, hardened context file path handling, dependency updates.
+- Review results from chat are also shown in the Source Control panel.
+- Minimum VS Code version is now 1.125.0.
+
 ## [0.22.2]
 - Updated readme
 

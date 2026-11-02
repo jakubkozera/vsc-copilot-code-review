@@ -1,7 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CancellationToken } from 'vscode';
 
 import { parseResponse } from '@/review/comment';
+import { reviewDiffWithCopilotCodeReview } from '@/review/copilotCodeReview';
+import { formatGatheringFilesMessage } from '@/review/formatGatheringFilesMessage';
 import { ModelRequest } from '@/review/ModelRequest';
 import { reviewDiff } from '@/review/review';
 import { Config } from '@/types/Config';
@@ -9,9 +14,22 @@ import { FileComments } from '@/types/FileComments';
 import { Logger } from '@/types/Logger';
 import { ModelError } from '@/types/ModelError';
 import { ReviewScope } from '@/types/ReviewRequest';
-import { Git } from '@/utils/git';
+import type { Git } from '@/utils/git';
+import { saveToFile } from '@/utils/saveToFile';
+import { getConfig } from '@/vscode/config';
 
-function createMockConfig() {
+vi.mock('@/vscode/config', () => ({
+    getConfig: vi.fn(),
+}));
+
+vi.mock('@/review/copilotCodeReview', () => ({
+    reviewDiffWithCopilotCodeReview: vi.fn(),
+}));
+
+function createMockConfig(
+    saveOutputToFile = false,
+    includeDeletedFiles = false
+) {
     const git = {
         getChangedFiles: vi.fn(),
         getFileDiff: vi.fn((_, __, path) => `diff for ${path}`),
@@ -26,40 +44,75 @@ function createMockConfig() {
 
     const config = {
         git,
+        workspaceRoot: '/test/workspace',
         getOptions: vi.fn(() => ({
             customPrompt: 'custom prompt',
+            contextFiles: ['AGENTS.md'],
             minSeverity: 3,
             excludeGlobs: [] as string[],
             enableDebugOutput: false,
-            mergeFileReviewRequests: true,
+            maxConcurrentModelRequests: 1,
+            saveOutputToFile,
+            includeDeletedFiles,
         })),
+        getModel: async () => 'model',
         logger,
     } as unknown as Config;
     return { config, git, logger };
+}
+
+function attachTempWorkspaceRoot(config: Config, tempDirs: string[]) {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'codereview-review-'));
+    tempDirs.push(workspaceRoot);
+    writeFileSync(join(workspaceRoot, 'AGENTS.md'), 'Project rules');
+    config.workspaceRoot = workspaceRoot;
 }
 
 const cancellationToken = {
     isCancellationRequested: false,
 } as CancellationToken;
 
-describe('reviewDiff', () => {
-    vi.mock('@/review/comment', () => ({
-        parseResponse: vi.fn(),
-        sortFileCommentsBySeverity: vi.fn(
-            (comments: Omit<FileComments, 'maxSeverity'>[]) => comments
-        ),
-    }));
-    vi.mock('@/review/ModelRequest', () => ({
-        ModelRequest: vi.fn(),
-    }));
+const modelRequest = {
+    addDiff: vi.fn(),
+    sendRequest: vi.fn(),
+    files: ['file1', 'file2'],
+} as Partial<ModelRequest> as ModelRequest;
 
+let capturedContextFiles: unknown[] | undefined;
+
+vi.mock('@/review/comment', () => ({
+    parseResponse: vi.fn(),
+    sortFileCommentsBySeverity: vi.fn(
+        (comments: Omit<FileComments, 'maxSeverity'>[]) => comments
+    ),
+}));
+
+vi.mock('@/review/ModelRequest', () => ({
+    ModelRequest: class {
+        constructor(
+            _model: unknown,
+            _options: unknown,
+            _logger: unknown,
+            _changeDescription: unknown,
+            contextFiles: unknown[] = []
+        ) {
+            capturedContextFiles = contextFiles;
+        }
+
+        addDiff = modelRequest.addDiff;
+        sendRequest = modelRequest.sendRequest;
+        files = modelRequest.files;
+    },
+}));
+
+vi.mock('@/utils/saveToFile', () => ({
+    saveToFile: vi.fn(),
+}));
+
+describe('reviewDiff', () => {
     let config: Config;
     let git: Git;
-    const modelRequest = {
-        addDiff: vi.fn(),
-        sendRequest: vi.fn(),
-        files: ['file1', 'file2'],
-    } as Partial<ModelRequest> as ModelRequest;
+    const tempDirs: string[] = [];
 
     const progress = {
         report: vi.fn(),
@@ -95,10 +148,20 @@ describe('reviewDiff', () => {
 
     beforeEach(() => {
         ({ config, git } = createMockConfig());
+        capturedContextFiles = undefined;
+        attachTempWorkspaceRoot(config, tempDirs);
+        vi.mocked(getConfig).mockResolvedValue(config);
 
         vi.mocked(git.getChangedFiles).mockResolvedValue(diffFiles);
-        vi.mocked(ModelRequest).mockImplementation(() => modelRequest);
     });
+
+    afterEach(() => {
+        for (const dir of tempDirs) {
+            rmSync(dir, { recursive: true, force: true });
+        }
+        tempDirs.length = 0;
+    });
+
     it('should return a review result', async () => {
         vi.mocked(modelRequest.sendRequest).mockResolvedValueOnce(
             reviewResponse
@@ -108,8 +171,7 @@ describe('reviewDiff', () => {
         const result = await reviewDiff(
             config,
             { scope },
-            progress,
-            cancellationToken
+            { progress, cancellationToken }
         );
 
         expect(result.request.scope).toBe(scope);
@@ -117,7 +179,7 @@ describe('reviewDiff', () => {
         expect(result.fileComments).toHaveLength(1);
 
         expect(progress.report).toHaveBeenCalledWith({
-            message: 'Gathering changes for 2 files...',
+            message: 'Gathering changes for file1, file2...',
             increment: 50,
         });
         expect(progress.report).toHaveBeenCalledWith({
@@ -150,8 +212,7 @@ describe('reviewDiff', () => {
         const result = await reviewDiff(
             config,
             { scope },
-            progress,
-            cancellationToken
+            { progress, cancellationToken }
         );
 
         expect(result.request.scope).toBe(scope);
@@ -159,7 +220,7 @@ describe('reviewDiff', () => {
         expect(result.fileComments).toHaveLength(1);
 
         expect(progress.report).toHaveBeenCalledWith({
-            message: 'Gathering changes for 1 files...',
+            message: 'Gathering changes for file2...',
             increment: 100,
         });
         expect(progress.report).toHaveBeenCalledWith({
@@ -172,15 +233,41 @@ describe('reviewDiff', () => {
         expect(parseResponse).toHaveBeenCalledWith('model response');
     });
 
-    it('merges file review requests if enabled', async () => {
+    it('includes deleted files when includeDeletedFiles is enabled', async () => {
+        const { config, git } = createMockConfig(false, true);
+        attachTempWorkspaceRoot(config, tempDirs);
+        vi.mocked(getConfig).mockResolvedValue(config);
+        vi.mocked(git.getChangedFiles).mockResolvedValue([
+            { file: 'deleted.ts', status: 'D' },
+            { file: 'file2', status: 'M' },
+        ]);
+
+        vi.mocked(modelRequest.sendRequest).mockResolvedValueOnce(
+            reviewResponse
+        );
+        vi.mocked(parseResponse).mockReturnValue(mockComments);
+
+        const result = await reviewDiff(
+            config,
+            { scope },
+            { progress, cancellationToken }
+        );
+
+        expect(result.files).toEqual([
+            { file: 'deleted.ts', status: 'D' },
+            { file: 'file2', status: 'M' },
+        ]);
+        expect(modelRequest.addDiff).toHaveBeenCalledTimes(2);
+    });
+
+    it('merges file review requests', async () => {
         vi.mocked(modelRequest.sendRequest).mockResolvedValue(reviewResponse);
         vi.mocked(parseResponse).mockReturnValue(mockComments);
 
         const result = await reviewDiff(
             config,
             { scope },
-            progress,
-            cancellationToken
+            { progress, cancellationToken }
         );
 
         expect(modelRequest.addDiff).toHaveBeenCalledTimes(2);
@@ -189,34 +276,6 @@ describe('reviewDiff', () => {
         expect(result.fileComments).toHaveLength(1);
         expect(result.errors).toHaveLength(0);
         expect(progress.report).toHaveBeenCalledTimes(3);
-    });
-
-    it('does not merge file review requests if disabled', async () => {
-        vi.mocked(modelRequest.sendRequest).mockResolvedValue(reviewResponse);
-        vi.mocked(parseResponse).mockReturnValue(mockComments);
-        vi.mocked(config.getOptions).mockReturnValue({
-            customPrompt: 'custom prompt',
-            minSeverity: 3,
-            excludeGlobs: [] as string[],
-            enableDebugOutput: false,
-            chatModel: 'gpt-4o',
-            mergeFileReviewRequests: false,
-            maxInputTokensFraction: 0.95,
-        });
-
-        const result = await reviewDiff(
-            config,
-            { scope },
-            progress,
-            cancellationToken
-        );
-
-        expect(modelRequest.addDiff).toHaveBeenCalledTimes(2);
-        expect(modelRequest.sendRequest).toHaveBeenCalledTimes(2);
-        expect(result.request.scope).toBe(scope);
-        expect(result.fileComments).toHaveLength(1);
-        expect(result.errors).toHaveLength(0);
-        expect(progress.report).toHaveBeenCalledTimes(4);
     });
 
     it('corrects file names if there is a mismatch', async () => {
@@ -231,8 +290,7 @@ describe('reviewDiff', () => {
         const result = await reviewDiff(
             config,
             { scope },
-            progress,
-            cancellationToken
+            { progress, cancellationToken }
         );
 
         expect(result.request.scope).toBe(scope);
@@ -252,8 +310,7 @@ describe('reviewDiff', () => {
         const result = await reviewDiff(
             config,
             { scope },
-            progress,
-            cancellationToken
+            { progress, cancellationToken }
         );
 
         expect(modelRequest.addDiff).not.toHaveBeenCalled();
@@ -272,8 +329,7 @@ describe('reviewDiff', () => {
         const result = await reviewDiff(
             config,
             { scope },
-            progress,
-            cancellationToken
+            { progress, cancellationToken }
         );
 
         expect(result.request.scope).toBe(scope);
@@ -298,8 +354,7 @@ describe('reviewDiff', () => {
         const result = await reviewDiff(
             config,
             { scope },
-            progress,
-            cancellationToken
+            { progress, cancellationToken }
         );
 
         expect(modelRequest.addDiff).toHaveBeenCalledTimes(3);
@@ -326,8 +381,7 @@ describe('reviewDiff', () => {
         const result = await reviewDiff(
             config,
             { scope },
-            progress,
-            cancellationToken
+            { progress, cancellationToken }
         );
 
         expect(result.request.scope).toBe(scope);
@@ -336,5 +390,182 @@ describe('reviewDiff', () => {
 
         expect(modelRequest.addDiff).toHaveBeenCalledTimes(1);
         expect(parseResponse).toHaveBeenCalledOnce();
+    });
+
+    it('saves review result to file when saveOutputToFile is enabled', async () => {
+        const { config, git } = createMockConfig(true); // Enable file saving
+        attachTempWorkspaceRoot(config, tempDirs);
+        vi.mocked(getConfig).mockResolvedValue(config);
+
+        vi.mocked(git.getChangedFiles).mockResolvedValue(diffFiles);
+        vi.mocked(modelRequest.sendRequest).mockResolvedValue(reviewResponse);
+        vi.mocked(parseResponse).mockReturnValue(mockComments);
+
+        const result = await reviewDiff(
+            config,
+            { scope },
+            { progress, cancellationToken }
+        );
+
+        expect(result.request.scope).toBe(scope);
+        expect(saveToFile).toHaveBeenCalledWith(config, result);
+    });
+
+    it('does not save review result to file when saveOutputToFile is disabled', async () => {
+        const { config, git } = createMockConfig(false); // Disable file saving
+        attachTempWorkspaceRoot(config, tempDirs);
+        vi.mocked(getConfig).mockResolvedValue(config);
+
+        vi.mocked(git.getChangedFiles).mockResolvedValue(diffFiles);
+        vi.mocked(modelRequest.sendRequest).mockResolvedValue(reviewResponse);
+        vi.mocked(parseResponse).mockReturnValue(mockComments);
+
+        const result = await reviewDiff(
+            config,
+            { scope },
+            { progress, cancellationToken }
+        );
+
+        expect(result.request.scope).toBe(scope);
+        expect(saveToFile).not.toHaveBeenCalled();
+    });
+
+    it('loads configured context files and passes them to model requests', async () => {
+        vi.mocked(modelRequest.sendRequest).mockResolvedValue(reviewResponse);
+        vi.mocked(parseResponse).mockReturnValue(mockComments);
+
+        await reviewDiff(config, { scope }, { progress, cancellationToken });
+
+        expect(capturedContextFiles).toEqual([
+            { path: 'AGENTS.md', content: 'Project rules' },
+        ]);
+    });
+
+    it('respects an explicit empty context override', async () => {
+        vi.mocked(modelRequest.sendRequest).mockResolvedValue(reviewResponse);
+        vi.mocked(parseResponse).mockReturnValue(mockComments);
+
+        await reviewDiff(
+            config,
+            { scope, contextFilesOverride: [] },
+            { progress, cancellationToken }
+        );
+
+        expect(capturedContextFiles).toEqual([]);
+    });
+
+    it('uses the Copilot Code Review provider path when requested', async () => {
+        vi.mocked(reviewDiffWithCopilotCodeReview).mockResolvedValue({
+            request: { scope },
+            files: diffFiles,
+            fileComments: [],
+            errors: [],
+        });
+
+        await reviewDiff(
+            config,
+            { scope },
+            {
+                providerId: 'copilot-code-review',
+                progress,
+                cancellationToken,
+            }
+        );
+
+        expect(reviewDiffWithCopilotCodeReview).toHaveBeenCalledWith(
+            config,
+            { scope },
+            diffFiles,
+            progress,
+            cancellationToken
+        );
+        expect(modelRequest.addDiff).not.toHaveBeenCalled();
+    });
+
+    it('saves Copilot Code Review provider results when file output is enabled', async () => {
+        const { config, git } = createMockConfig(true);
+        attachTempWorkspaceRoot(config, tempDirs);
+        vi.mocked(getConfig).mockResolvedValue(config);
+        vi.mocked(git.getChangedFiles).mockResolvedValue([
+            { file: 'changed.ts', status: 'M' },
+        ]);
+        const copilotResult = {
+            request: { scope },
+            files: [{ file: 'changed.ts', status: 'M' }],
+            fileComments: [],
+            errors: [],
+        };
+        vi.mocked(reviewDiffWithCopilotCodeReview).mockResolvedValue(
+            copilotResult
+        );
+
+        const result = await reviewDiff(
+            config,
+            { scope },
+            {
+                providerId: 'copilot-code-review',
+            }
+        );
+
+        expect(reviewDiffWithCopilotCodeReview).toHaveBeenCalledWith(
+            config,
+            { scope },
+            [{ file: 'changed.ts', status: 'M' }],
+            undefined,
+            undefined
+        );
+        expect(result).toBe(copilotResult);
+        expect(saveToFile).toHaveBeenCalledWith(config, copilotResult);
+    });
+});
+
+describe('formatGatheringFilesMessage', () => {
+    it('handles single file', () => {
+        const files = [{ file: 'src/index.ts', status: 'M' }];
+        const result = formatGatheringFilesMessage(files);
+        expect(result).toBe('Gathering changes for index.ts...');
+    });
+
+    it('handles two files', () => {
+        const files = [
+            { file: 'src/index.ts', status: 'M' },
+            { file: 'src/app.ts', status: 'A' },
+        ];
+        const result = formatGatheringFilesMessage(files);
+        expect(result).toBe('Gathering changes for index.ts, app.ts...');
+    });
+
+    it('respects custom numFileNamesShown parameter', () => {
+        const files = [
+            { file: 'file1.ts', status: 'M' },
+            { file: 'file2.ts', status: 'M' },
+            { file: 'file3.ts', status: 'M' },
+        ];
+        const result = formatGatheringFilesMessage(files, 2);
+        expect(result).toBe(
+            'Gathering changes for file1.ts, file2.ts, and 1 other file...'
+        );
+    });
+
+    it('respects custom numFileNamesShown parameter (with plural form)', () => {
+        const files = [
+            { file: 'file1.ts', status: 'M' },
+            { file: 'file2.ts', status: 'M' },
+            { file: 'file3.ts', status: 'M' },
+            { file: 'file4.ts', status: 'M' },
+        ];
+        const result = formatGatheringFilesMessage(files, 2);
+        expect(result).toBe(
+            'Gathering changes for file1.ts, file2.ts, and 2 other files...'
+        );
+    });
+
+    it('shows all files when count equals custom numFileNamesShown', () => {
+        const files = [
+            { file: 'file1.ts', status: 'M' },
+            { file: 'file2.ts', status: 'M' },
+        ];
+        const result = formatGatheringFilesMessage(files, 2);
+        expect(result).toBe('Gathering changes for file1.ts, file2.ts...');
     });
 });

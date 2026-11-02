@@ -11,7 +11,7 @@ import { UncommittedRef } from '@/types/Ref';
 import type { ReviewRequest } from '@/types/ReviewRequest';
 import type { Git } from '@/utils/git';
 import { getConfig } from '@/vscode/config';
-import { ReviewTool, type ReviewInput } from '@/vscode/ReviewTool';
+import { type ReviewInput, ReviewTool } from '@/vscode/ReviewTool';
 
 // Mock for getConfig and related functions
 vi.mock('@/vscode/config', () => ({
@@ -42,6 +42,7 @@ describe('ReviewTool', () => {
     beforeEach(() => {
         vi.mocked(reviewDiff).mockResolvedValue({
             request: { scope: {} } as ReviewRequest,
+            files: [],
             fileComments: [
                 {
                     target: 'test-file.ts',

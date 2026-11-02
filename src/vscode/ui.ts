@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 
-import { Config } from '@/types/Config';
-import { UncommittedRef, type Ref } from '@/types/Ref';
+import type { Config } from '@/types/Config';
+import { type Ref, UncommittedRef } from '@/types/Ref';
 import { distributeItems } from '@/utils/distributeItems';
-import { RefList, shortHashLength } from '@/utils/git';
+import { shortHashLength } from '@/utils/git';
 
 type RefQuickPickItem = vscode.QuickPickItem & {
     ref?: Ref;
@@ -15,36 +15,38 @@ export async function pickRef(
     title: string,
     beforeRef?: string,
     type?: 'branch' | 'tag' | 'commit', // all types by default
-    totalCount: number = 20 // total amount of refs to show in picker
+    totalCount: number = 30 // total amount of refs to show in picker
 ): Promise<Ref | undefined> {
-    let uncommitted: RefList = [];
-    let branches: RefList = [];
-    let commits: RefList = [];
-    let tags: RefList = [];
-    if (!type && !beforeRef) {
-        uncommitted = await config.git.getUncommittedChanges();
-    }
-    if (!type || type === 'branch') {
-        branches = await config.git.getBranchList(beforeRef, totalCount + 1);
-    }
-    if (!type || type === 'commit') {
-        commits = await config.git.getCommitList(beforeRef, totalCount + 1);
-    }
-    if (!type || type === 'tag') {
-        tags = await config.git.getTagList(beforeRef, totalCount + 1);
-    }
+    const showUncommitted = !type && !beforeRef;
+    const showDetachedHead = !beforeRef;
+    const showBranches = !type || type === 'branch';
+    const showCommits = !type || type === 'commit';
+    const showTags = !type || type === 'tag';
+
+    const [uncommitted, detachedHead, branches, commits, tags] =
+        await Promise.all([
+            showUncommitted ? config.git.getUncommittedChanges() : [],
+            showDetachedHead ? config.git.getDetachedHead() : undefined,
+            showBranches
+                ? config.git.getBranchList(beforeRef, totalCount + 1)
+                : [],
+            showCommits
+                ? config.git.getCommitList(beforeRef, totalCount + 1)
+                : [],
+            showTags ? config.git.getTagList(beforeRef, totalCount + 1) : [],
+        ]);
 
     const [numBranches, numCommits, numTags] = distributeItems(
-        totalCount - uncommitted.length,
+        totalCount - uncommitted.length - (detachedHead ? 1 : 0),
         [branches.length, commits.length, tags.length]
     );
 
-    let moreBranchesOption = undefined;
-    let moreCommitsOption = undefined;
-    let moreTagsOption = undefined;
+    let moreBranchesOption;
+    let moreCommitsOption;
+    let moreTagsOption;
     const quickPickOptions: RefQuickPickItem[] = [];
 
-    if (uncommitted && uncommitted.length > 0) {
+    if (uncommitted.length > 0) {
         const uncommittedIcon = new vscode.ThemeIcon('request-changes');
         quickPickOptions.push({
             label: 'Not committed',
@@ -60,7 +62,20 @@ export async function pickRef(
             });
         }
     }
-    if (branches && branches.length > 0) {
+    if (detachedHead) {
+        quickPickOptions.push({
+            label: 'Detached HEAD',
+            kind: vscode.QuickPickItemKind.Separator,
+        });
+        const detachedIcon = new vscode.ThemeIcon('git-commit');
+        quickPickOptions.push({
+            label: detachedHead.name,
+            ref: detachedHead.ref,
+            description: detachedHead.description,
+            iconPath: detachedIcon,
+        });
+    }
+    if (branches.length > 0) {
         quickPickOptions.push({
             label: 'Branches',
             kind: vscode.QuickPickItemKind.Separator,
@@ -85,7 +100,7 @@ export async function pickRef(
         }
     }
 
-    if (commits && commits.length > 0) {
+    if (commits.length > 0) {
         quickPickOptions.push({
             label: 'Commits',
             kind: vscode.QuickPickItemKind.Separator,
@@ -97,6 +112,7 @@ export async function pickRef(
                 label: (ref.ref as string).substring(0, shortHashLength),
                 ref: ref.ref,
                 description: ref.description,
+                detail: ref.extra,
                 iconPath: commitIcon,
             });
         }
@@ -109,7 +125,7 @@ export async function pickRef(
         }
     }
 
-    if (tags && tags.length > 0) {
+    if (tags.length > 0) {
         quickPickOptions.push({
             label: 'Tags',
             kind: vscode.QuickPickItemKind.Separator,
@@ -121,6 +137,7 @@ export async function pickRef(
                 label: tag.ref as string,
                 ref: tag.ref,
                 description: tag.description,
+                detail: tag.extra,
                 iconPath: tagIcon,
             });
         }
@@ -187,17 +204,61 @@ export async function pickRefs(config: Config, type?: 'branch') {
     return { base, target };
 }
 
-/** Asks user to select a commit. Returns short commit hash, or undefined when aborted.
- * If `beforeRef` is provided, only commits before that ref are shown. */
-export async function pickCommit(
+/** offer Fetch Remotes action*/
+export async function promptToFetchRemotes(message: string) {
+    const abortAction = { title: 'Abort' };
+    const fetchAction = { title: 'Fetch Remotes' };
+
+    const userSelection = await vscode.window.showErrorMessage(
+        message,
+        {},
+        abortAction,
+        fetchAction
+    );
+
+    if (userSelection === fetchAction) {
+        //refetch using vscode (should handle passphrase input if needed)
+        await vscode.commands.executeCommand('git.fetch');
+        return 'fetch';
+    }
+    return 'abort';
+}
+
+export async function promptToCheckout(
     config: Config,
-    beforeRef?: string,
-    pickerTitle: string = 'Select a commit to review'
-) {
-    const commit = await pickRef(config, pickerTitle, beforeRef, 'commit');
-    if (!commit) {
-        return;
+    target: string
+): Promise<boolean> {
+    const autoCheckoutTarget = config.getOptions().autoCheckoutTarget;
+
+    if (autoCheckoutTarget === 'always') {
+        return true;
+    } else if (autoCheckoutTarget === 'never') {
+        return false;
     }
 
-    return commit;
+    // Show prompt with options to remember preference
+    const checkoutAction = { title: 'Check Out' };
+    const alwaysCheckoutAction = { title: 'Always Check Out' };
+    const skipAction = { title: 'Skip' };
+    const neverCheckoutAction = { title: 'Never' };
+
+    const userSelection = await vscode.window.showInformationMessage(
+        `Would you like to check out '${target}'? This enables code navigation and fixes.`,
+        {},
+        checkoutAction,
+        alwaysCheckoutAction,
+        skipAction,
+        neverCheckoutAction
+    );
+
+    if (userSelection === alwaysCheckoutAction) {
+        await config.setOption('autoCheckoutTarget', 'always');
+    } else if (userSelection === neverCheckoutAction) {
+        await config.setOption('autoCheckoutTarget', 'never');
+    }
+
+    return (
+        userSelection === checkoutAction ||
+        userSelection === alwaysCheckoutAction
+    );
 }

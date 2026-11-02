@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 import { reviewDiff } from '@/review/review';
-import { UncommittedRef, type Ref } from '@/types/Ref';
+import { type Ref, UncommittedRef } from '@/types/Ref';
 import { getConfig } from './config';
 
 // Input for #review
@@ -44,12 +44,9 @@ export class ReviewTool implements vscode.LanguageModelTool<ReviewInput> {
                 options.input.changeDescription;
         }
 
-        const result = await reviewDiff(
-            config,
-            reviewRequest,
-            undefined,
-            token
-        );
+        const result = await reviewDiff(config, reviewRequest, {
+            cancellationToken: token,
+        });
         const comments = result.fileComments.flatMap((fileComment) => {
             return fileComment.comments.map(
                 (comment) =>

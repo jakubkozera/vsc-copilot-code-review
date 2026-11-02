@@ -11,8 +11,13 @@ describe('ModelRequest', () => {
     let request: ModelRequest;
     beforeEach(async () => {
         const { config } = createMockConfig();
-        request = new ModelRequest(config, 'Various refactorings');
         model = await config.getModel();
+        request = new ModelRequest(
+            model,
+            config.getOptions(),
+            config.logger,
+            'Various refactorings'
+        );
     });
 
     it('constructs empty request', () => {
@@ -63,6 +68,49 @@ describe('ModelRequest', () => {
         expect(request.getPrompt()).not.toContain(longDiff);
 
         expect(model.countTokens).toHaveBeenCalledTimes(3);
+    });
+
+    it('truncates context files before truncating the diff', async () => {
+        const { config } = createMockConfig();
+        request = new ModelRequest(
+            model,
+            config.getOptions(),
+            config.logger,
+            undefined,
+            [{ path: 'AGENTS.md', content: 'c'.repeat(10000) }]
+        );
+        vi.mocked(model.countTokens)
+            .mockResolvedValueOnce(2000)
+            .mockResolvedValueOnce(2);
+
+        await request.addDiff('file1.ts', 'DIFF1');
+
+        expect(request.getPrompt()).toContain('DIFF1');
+        expect(request.getPrompt()).not.toContain('c'.repeat(10000));
+        expect(config.logger.info).toHaveBeenCalledWith(
+            expect.stringContaining('Context file truncated from 10000 to ')
+        );
+    });
+
+    it('logs when a context file is removed to fit token limit', async () => {
+        const { config } = createMockConfig();
+        request = new ModelRequest(
+            model,
+            config.getOptions(),
+            config.logger,
+            undefined,
+            [{ path: 'AGENTS.md', content: '1234567890' }]
+        );
+        vi.mocked(model.countTokens)
+            .mockResolvedValueOnce(2000)
+            .mockResolvedValueOnce(2);
+
+        await request.addDiff('file1.ts', 'd'.repeat(10000));
+
+        expect(request.getPrompt()).not.toContain('1234567890');
+        expect(config.logger.info).toHaveBeenCalledWith(
+            'Context file removed to fit token limit: AGENTS.md'
+        );
     });
 
     it('throws if first diff cannot be truncated to fit token limit', async () => {
@@ -125,10 +173,10 @@ describe('ModelRequest', () => {
 
 function createMockConfig() {
     const model = {
-        sendRequest: vi.fn(async () => {
+        sendRequest: vi.fn(() => {
             return Promise.resolve('Some review comment\n3/5');
         }),
-        countTokens: vi.fn(async () => Promise.resolve(4)),
+        countTokens: vi.fn(() => Promise.resolve(4)),
         maxInputTokens: 1000,
     } as unknown as Model;
 
@@ -140,16 +188,15 @@ function createMockConfig() {
     } as Logger;
 
     const config = {
-        // eslint-disable-next-line @typescript-eslint/require-await
         getModel: async () => model,
         getOptions: () =>
             ({
                 minSeverity: 3,
                 customPrompt: 'custom prompt',
+                contextFiles: ['AGENTS.md'],
                 excludeGlobs: [] as string[],
                 enableDebugOutput: false,
                 chatModel: 'test-model',
-                mergeFileReviewRequests: true,
                 maxInputTokensFraction: 0.8,
             }) as Options,
         logger,

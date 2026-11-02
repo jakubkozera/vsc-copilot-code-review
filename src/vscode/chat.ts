@@ -1,0 +1,1014 @@
+import * as vscode from 'vscode';
+
+import { reviewDiff } from '@/review/review';
+import { Config } from '@/types/Config';
+import { FileComments } from '@/types/FileComments';
+import { Logger } from '@/types/Logger';
+import { UncommittedRef } from '@/types/Ref';
+import { ReviewComment } from '@/types/ReviewComment';
+import type { ReviewProgress } from '@/types/ReviewProgress';
+import { ReviewRequest, ReviewScope } from '@/types/ReviewRequest';
+import { ReviewResult } from '@/types/ReviewResult';
+import { correctFilename } from '@/utils/filenames';
+import { extractModelSpecs, parseArguments } from '@/utils/parseArguments';
+import {
+    copilotCodeReviewProviderId,
+    copilotCodeReviewProviderName,
+    isCopilotCodeReviewProviderId,
+} from '@/utils/reviewProvider';
+import { getConfig } from './config';
+import { FixCommentArgs } from './fix';
+import { pickRef, pickRefs, promptToCheckout } from './ui';
+import { toCommandLink, toUri } from './uri';
+
+/** Minimal model shape used by resolveOneModelSpec, allowing test doubles */
+export type ModelInfo = Pick<
+    vscode.LanguageModelChat,
+    'vendor' | 'id' | 'name'
+>;
+
+/** Called with the (merged) result of a chat review, e.g. to show it in the Source Control panel */
+export type ReviewResultsListener = (result: ReviewResult) => Promise<void>;
+
+export function registerChatParticipant(
+    context: vscode.ExtensionContext,
+    onReviewResults?: ReviewResultsListener
+) {
+    const chatParticipant = vscode.chat.createChatParticipant(
+        'codereview',
+        (chatRequest, chatContext, stream, token) =>
+            handleChat(chatRequest, chatContext, stream, token, onReviewResults)
+    );
+    chatParticipant.iconPath = vscode.Uri.joinPath(
+        context.extensionUri,
+        'images/chat_icon.png'
+    );
+    return chatParticipant;
+}
+
+async function handleChat(
+    chatRequest: vscode.ChatRequest,
+    _context: vscode.ChatContext,
+    stream: vscode.ChatResponseStream,
+    token: vscode.CancellationToken,
+    onReviewResults?: ReviewResultsListener
+): Promise<void> {
+    if (chatRequest.command !== 'review') {
+        stream.markdown(
+            'Please use the /review command:\n' +
+                ' - `@codereview /review` to review changes between two branches, commits, or tags. You can specify git refs using e.g. `/review develop main`, or omit the second or both arguments to select refs interactively. Use `/review staged` or `/review unstaged` to review uncommitted changes. Use `model:modelId` to specify review providers inline, e.g. `/review model:copilot-code-review develop main` or `/review model:gpt-5.5 develop main`. Use `context:path` to override which context files are attached, or `context:none` to disable context for a single review.'
+        );
+        return;
+    }
+
+    const config = await getConfig({ refreshWorkspace: true });
+    const availableModels = await vscode.lm.selectChatModels();
+
+    // Check if models were specified inline in the prompt (e.g. model:gpt-5.5)
+    const { modelIds: promptModelSpecs, remaining: refTokens } =
+        extractModelSpecs(chatRequest.prompt);
+
+    // Check if we need to prompt for model selection
+    const options = config.getOptions();
+    let selectedModelIds = [options.chatModel];
+    if (promptModelSpecs.length > 0) {
+        // Resolve inline model specs against available models
+        const resolvedModelIds = await resolveModelSpecs(
+            promptModelSpecs,
+            stream,
+            availableModels
+        );
+        if (resolvedModelIds.length === 0) {
+            return;
+        }
+        selectedModelIds = resolvedModelIds;
+    } else if (options.selectChatModelForReview === 'Always ask') {
+        const selected = await config.promptForSessionModelIds();
+        if (!selected || selected.length === 0) {
+            stream.markdown('No model selected. Review cancelled.');
+            return;
+        }
+        selectedModelIds = selected;
+    }
+
+    // Pass only the ref tokens (model: specs already extracted)
+    const cleanPrompt = refTokens.join(' ');
+    const reviewRequest = await getReviewRequest(config, cleanPrompt);
+    if (!reviewRequest) {
+        stream.markdown(`Nothing to do.`);
+        return;
+    }
+
+    const modelNames = getModelDisplayNames(selectedModelIds, availableModels);
+
+    if (!reviewRequest.scope.isCommitted) {
+        stream.markdown(
+            `${await formatReviewStartMessage(config, reviewRequest, modelNames, 'markdown')}\n\n`
+        );
+    } else {
+        const { base, target } = reviewRequest.scope;
+        if (!reviewRequest.scope.isTargetCheckedOut) {
+            await maybeCheckoutTarget(target, stream);
+            //regardless of choice, recheck if ref is now checked out
+            reviewRequest.scope = await config.git.getReviewScope(target, base);
+        }
+
+        stream.markdown(
+            `${await formatReviewStartMessage(config, reviewRequest, modelNames, 'markdown')}\n\n`
+        );
+        if (await config.git.isSameRef(base, target)) {
+            stream.markdown('No changes found.');
+            return;
+        }
+    }
+
+    // Create a shared progress reporter that deduplicates messages across all models
+    const sharedProgress = createSharedProgress(stream);
+
+    const { results, errors } = await runReviewWithModels(
+        config,
+        reviewRequest,
+        selectedModelIds,
+        modelNames,
+        sharedProgress,
+        token
+    );
+
+    // Display results based on outputModeWithMultipleModels setting
+    if (
+        options.outputModeWithMultipleModels === 'Merged with attribution' &&
+        results.length > 1
+    ) {
+        showMergedReviewResults(config, results, stream, token);
+    } else {
+        // Separate sections (default)
+        showSeparateReviewResults(config, results, stream, token);
+    }
+
+    reportErrors(config.logger, errors.map(formatModelReviewError), stream);
+
+    if (onReviewResults && results.length > 0) {
+        const hasVisibleComments = results.some(({ result }) =>
+            result.fileComments.some((file) =>
+                file.comments.some(
+                    (comment) =>
+                        comment.severity >= options.minSeverity &&
+                        comment.line > 0
+                )
+            )
+        );
+        if (hasVisibleComments) {
+            await onReviewResults({
+                ...results[0].result,
+                fileComments: results.flatMap(
+                    ({ result }) => result.fileComments
+                ),
+                errors: results.flatMap(({ result }) => result.errors),
+            });
+            stream.markdown(
+                '\n\n**Review results are also available in the Source Control panel**\n\n'
+            );
+            stream.button({
+                command: 'codeReview.openCodeReviewPanel',
+                title: 'Open Code Review Panel',
+            });
+        }
+    }
+}
+
+async function maybeCheckoutTarget(
+    target: string,
+    stream: vscode.ChatResponseStream
+) {
+    const config = await getConfig();
+    const shouldCheckout = await promptToCheckout(config, target);
+    if (!shouldCheckout) {
+        return;
+    }
+
+    try {
+        stream.markdown(`Checking out \`${target}\`...`);
+        const { ref, detached } = await config.git.checkoutTarget(target);
+
+        if (detached) {
+            stream.markdown(
+                `\n> Checked out branch in detached HEAD state because a ` +
+                    `local branch of that name already exists at a different ` +
+                    `commit.\n\n`
+            );
+        } else if (ref !== target) {
+            stream.markdown(` Checked out local tracking branch \`${ref}\`.\n`);
+        } else {
+            stream.markdown(' done.\n');
+        }
+    } catch (error) {
+        const errorMessage =
+            error instanceof Error ? error.message : String(error);
+        stream.markdown(`\n> Failed to check out ${target}: ${errorMessage}\n`);
+    }
+}
+
+/** Constructs review request (prompting user if needed) */
+export async function getReviewRequest(
+    config: Config,
+    prompt: string
+): Promise<ReviewRequest | undefined> {
+    const parsedPrompt = await parseArguments(config.git, prompt);
+
+    let refs;
+    if (parsedPrompt.target && parsedPrompt.base) {
+        // both refs are provided
+        refs = parsedPrompt;
+    } else if (
+        parsedPrompt.target &&
+        config.git.isUncommitted(parsedPrompt.target)
+    ) {
+        refs = parsedPrompt;
+    } else if (parsedPrompt.target && !parsedPrompt.base) {
+        // only target ref is provided
+        const base = await pickRef(
+            config,
+            'Select a branch/tag/commit to compare with (2/2)',
+            parsedPrompt.target
+        );
+        if (!base) {
+            return;
+        }
+        refs = { target: parsedPrompt.target, base };
+    } else {
+        refs = await pickRefs(config, undefined);
+    }
+
+    let reviewScope: ReviewScope;
+    if (config.git.isValidRefPair(refs)) {
+        reviewScope = await config.git.getReviewScope(refs.target, refs.base);
+    } else if (
+        refs?.target &&
+        (await config.git.isInitialCommit(refs.target))
+    ) {
+        reviewScope = await config.git.getReviewScope(refs.target, undefined);
+    } else {
+        return;
+    }
+
+    return {
+        scope: reviewScope,
+        contextFilesOverride: parsedPrompt.contextFilesOverride,
+    };
+}
+
+function buildComment(
+    config: Config,
+    comment: ReviewComment,
+    isTargetCheckedOut: boolean,
+    showAttribution = false
+) {
+    const isValidLineNumber = isTargetCheckedOut && comment.line > 0;
+
+    // some things learned about the markdown parsing:
+    // - pushing multiple items to the stream with different isTrusted values will add newlines between them
+    // - using theme icons can break other markdown (links) following it (also can cause display issues if main comment contains $(var) type text)
+    // - using quotes (>) helps isolate unclosed markdown elements from the following unquoted text
+
+    // Build the entire comment as a single markdown string
+    const markdown = new vscode.MarkdownString();
+    markdown.appendMarkdown('\n - ');
+
+    // Add line number anchor (line 0: comment on removed lines or a deleted file, link to the file instead)
+    const uri = toUri(config, comment.file, comment.line);
+    const locationLabel = comment.line > 0 ? `Line ${comment.line}` : 'File';
+    markdown.appendMarkdown(`[${locationLabel}](${uri.toString()})`);
+
+    // Show which model flagged this issue (if multiple models)
+    if (showAttribution && comment.model) {
+        markdown.appendMarkdown(' | *');
+        markdown.appendText(comment.model);
+        markdown.appendMarkdown('*');
+    }
+
+    // (debug: prompt type)
+    if (comment.promptType) {
+        markdown.appendMarkdown(` | **${comment.promptType}**`);
+    }
+    markdown.appendText(` | Severity ${comment.severity}/5`);
+
+    // Add fix button if location is valid
+    if (isValidLineNumber) {
+        markdown.appendMarkdown(
+            ` | ${createFixLinkMarkdown(
+                comment.file,
+                comment.line,
+                comment.comment
+            )}`
+        );
+        markdown.isTrusted = { enabledCommands: ['codeReview.fixComment'] };
+    }
+
+    // Properly quote multi-line comments
+    const quotedComment = comment.comment
+        .split('\n')
+        .map((line) => `> ${line}`)
+        .join('\n');
+    markdown.appendMarkdown(`\n${quotedComment}`);
+
+    return markdown;
+}
+
+function createFixLinkMarkdown(
+    filePath: string,
+    line: number,
+    commentText: string
+) {
+    const args: FixCommentArgs = {
+        file: filePath,
+        line: line,
+        comment: commentText,
+    };
+    const icon = '✦';
+    const nbsp = '\u00A0';
+    return `[**${icon}${nbsp}Fix**](${toCommandLink('codeReview.fixComment', args)})`;
+}
+
+/**
+ * Get the display name for a model ID by looking it up in the available models.
+ * Falls back to the ID part if the model is not found.
+ * @param modelId The model ID to look up
+ * @param cachedModels Optional cached list of models to avoid repeated API calls
+ */
+export function getModelDisplayName(
+    modelId: string,
+    cachedModels: vscode.LanguageModelChat[]
+): string {
+    if (isCopilotCodeReviewProviderId(modelId)) {
+        return copilotCodeReviewProviderName;
+    }
+
+    if (cachedModels && cachedModels.length > 0) {
+        // Model IDs are in format "vendor:id"
+        const colonIdx = modelId.indexOf(':');
+        const [vendor, id] =
+            colonIdx >= 0
+                ? [modelId.slice(0, colonIdx), modelId.slice(colonIdx + 1)]
+                : [undefined, modelId];
+
+        const matchingModel = cachedModels.find((m) =>
+            vendor ? m.vendor === vendor && m.id === id : m.id === id
+        );
+
+        if (matchingModel) {
+            return matchingModel.name ?? matchingModel.id;
+        }
+    }
+
+    // Fallback: just return the id part
+    const colonIdx = modelId.indexOf(':');
+    if (colonIdx >= 0) {
+        return modelId.slice(colonIdx + 1);
+    }
+    return modelId;
+}
+
+/** Maps configured provider IDs to user-facing names for status messages. */
+export function getModelDisplayNames(
+    modelIds: string[],
+    cachedModels: vscode.LanguageModelChat[]
+): string[] {
+    return modelIds.map((id) => getModelDisplayName(id, cachedModels));
+}
+
+/**
+ * Builds the common "Reviewing..." status text used by chat output and the
+ * background command notification, with optional markdown formatting.
+ */
+export async function formatReviewStartMessage(
+    config: Config,
+    reviewRequest: ReviewRequest,
+    modelNames: string[],
+    format: 'markdown' | 'plain'
+): Promise<string> {
+    const modelNamesDisplay =
+        format === 'markdown'
+            ? modelNames.length === 1
+                ? `**${modelNames[0]}**`
+                : modelNames.map((name) => `**${name}**`).join(', ')
+            : modelNames.join(', ');
+
+    if (!reviewRequest.scope.isCommitted) {
+        const targetLabel =
+            reviewRequest.scope.target === UncommittedRef.Staged
+                ? 'staged'
+                : 'unstaged';
+        return `Reviewing ${targetLabel} changes using ${modelNamesDisplay}...`;
+    }
+
+    const { base, target } = reviewRequest.scope;
+    const targetIsBranch = await config.git.isBranch(target);
+    const targetDisplay = format === 'markdown' ? `\`${target}\`` : target;
+    const baseDisplay = format === 'markdown' ? `\`${base}\`` : base;
+    return `Reviewing changes ${
+        targetIsBranch ? 'on' : 'at'
+    } ${targetDisplay} compared to ${baseDisplay} using ${modelNamesDisplay}...`;
+}
+
+/**
+ * Resolve model specs from inline `model:xxx` syntax against available VS Code models.
+ * Supports exact match on id, vendor:id, or substring match on id/name.
+ * Returns resolved model IDs in "vendor:id" format.
+ */
+async function resolveModelSpecs(
+    specs: string[],
+    stream: vscode.ChatResponseStream,
+    availableModels: ModelInfo[]
+): Promise<string[]> {
+    if (!availableModels || availableModels.length === 0) {
+        stream.markdown('No chat models available. Review cancelled.');
+        return [];
+    }
+
+    const resolvedIds = new Set<string>();
+    const notFound: string[] = [];
+    const ambiguous: string[] = [];
+    for (const spec of specs) {
+        const resolved = resolveOneModelSpec(spec, availableModels);
+        if (resolved.match) {
+            resolvedIds.add(resolved.match);
+        } else if (resolved.ambiguous) {
+            ambiguous.push(
+                `'${spec}' matches multiple models: ${resolved.ambiguous.join(', ')}`
+            );
+        } else {
+            const suggestion = suggestClosestModelSpec(spec, availableModels);
+            notFound.push(
+                suggestion
+                    ? `'${spec}' (did you mean '${suggestion}'?)`
+                    : `'${spec}'`
+            );
+        }
+    }
+
+    if (ambiguous.length > 0) {
+        stream.markdown(
+            `Ambiguous model spec(s) — please be more specific: ${ambiguous.join('; ')}. Use the 'Code Review: Select Review Model' command to see available IDs.`
+        );
+        return [];
+    }
+    if (notFound.length > 0) {
+        stream.markdown(
+            `Model(s) not found: ${notFound.join(', ')}. Available model IDs can be found via the 'Code Review: Select Review Model' command.`
+        );
+        return [];
+    }
+
+    return [...resolvedIds];
+}
+
+export type ModelSpecResult =
+    | { match: string; ambiguous?: never }
+    | { match?: never; ambiguous: string[] }
+    | { match?: never; ambiguous?: never };
+
+/**
+ * Resolve a single model spec against available models.
+ * Matching priority: exact vendor:id > exact id > substring match on id > substring match on name.
+ * If a substring match is ambiguous (multiple hits), returns the list of candidates instead.
+ */
+export function resolveOneModelSpec(
+    spec: string,
+    models: ModelInfo[]
+): ModelSpecResult {
+    const toId = (m: ModelInfo) => `${m.vendor}:${m.id}`;
+    const specLower = spec.toLowerCase();
+    const providerNameLower = copilotCodeReviewProviderName.toLowerCase();
+
+    if (specLower === copilotCodeReviewProviderId) {
+        return { match: copilotCodeReviewProviderId };
+    }
+
+    if (specLower.length >= 4 && providerNameLower.startsWith(specLower)) {
+        return { match: copilotCodeReviewProviderId };
+    }
+
+    // If spec contains ':', try exact vendor:id match
+    if (spec.includes(':')) {
+        const colonIdx = spec.indexOf(':');
+        const vendor = spec.slice(0, colonIdx).toLowerCase();
+        const id = spec.slice(colonIdx + 1).toLowerCase();
+        const exactMatch = models.find(
+            (m) =>
+                m.vendor.toLowerCase() === vendor && m.id.toLowerCase() === id
+        );
+        if (exactMatch) {
+            return { match: toId(exactMatch) };
+        }
+    }
+
+    // Try exact id match (any vendor)
+    const exactIdMatches = models.filter(
+        (m) => m.id.toLowerCase() === specLower
+    );
+    if (exactIdMatches.length === 1) {
+        return { match: toId(exactIdMatches[0]) };
+    }
+    if (exactIdMatches.length > 1) {
+        return { ambiguous: exactIdMatches.map(toId) };
+    }
+
+    // Try substring match on model id — fail-fast if ambiguous
+    const idSubstringMatches = models.filter((m) =>
+        m.id.toLowerCase().includes(specLower)
+    );
+    if (idSubstringMatches.length === 1) {
+        return { match: toId(idSubstringMatches[0]) };
+    }
+    if (idSubstringMatches.length > 1) {
+        return { ambiguous: idSubstringMatches.map(toId) };
+    }
+
+    // Try substring match on model name — fail-fast if ambiguous
+    const nameMatches = models.filter((m) =>
+        m.name?.toLowerCase().includes(specLower)
+    );
+    if (nameMatches.length === 1) {
+        return { match: toId(nameMatches[0]) };
+    }
+    if (nameMatches.length > 1) {
+        return { ambiguous: nameMatches.map(toId) };
+    }
+
+    return {};
+}
+
+/** Suggest closest model id (or vendor:id) for typo recovery. */
+export function suggestClosestModelSpec(
+    spec: string,
+    models: ModelInfo[]
+): string | undefined {
+    if (models.length === 0) {
+        return;
+    }
+
+    const candidates = models.flatMap((m) => [m.id, `${m.vendor}:${m.id}`]);
+    const suggestion = correctFilename(spec, candidates);
+
+    if (!suggestion) {
+        return;
+    }
+
+    return suggestion;
+}
+
+/** Result of a review with model information */
+export type ModelReviewResult = {
+    modelId: string;
+    modelName: string;
+    result: ReviewResult;
+};
+
+/** Captures a model-level failure together with the model that produced it. */
+export type ModelReviewError = {
+    modelId: string;
+    modelName: string;
+    error: unknown;
+};
+
+/** Creates a shared progress reporter that deduplicates messages across all models */
+export function createSharedProgress(
+    stream: vscode.ChatResponseStream
+): ReviewProgress {
+    const reportedMessages = new Set<string>();
+    return {
+        // Chat streams only support textual progress, so numeric increments are
+        // intentionally ignored here. Notification progress preserves them.
+        report: ({ message }) => {
+            if (message && !reportedMessages.has(message)) {
+                reportedMessages.add(message);
+                stream.progress(message);
+            }
+        },
+    };
+}
+
+/**
+ * Runs the same review request across multiple models using the extension's
+ * configured concurrency limit, returning successful results and per-model
+ * failures separately so callers can decide how to present them.
+ */
+export async function runReviewWithModels(
+    config: Config,
+    reviewRequest: ReviewRequest,
+    modelIds: string[],
+    modelNames: string[],
+    progress: ReviewProgress,
+    token: vscode.CancellationToken
+): Promise<{ results: ModelReviewResult[]; errors: ModelReviewError[] }> {
+    if (modelIds.length !== modelNames.length) {
+        throw new Error('Expected one display name for each review model.');
+    }
+
+    // Run reviews for all selected models with bounded concurrency
+    const reviewTasks = modelIds.map(
+        (modelId, index) => () =>
+            reviewWithModel(
+                config,
+                reviewRequest,
+                modelId,
+                modelNames[index],
+                progress,
+                token
+            )
+    );
+    const settledResults = await runWithConcurrency(
+        reviewTasks,
+        config.getOptions().maxConcurrentModelRequests
+    );
+
+    // Collect successful results and log failures
+    const results: ModelReviewResult[] = [];
+    const errors: ModelReviewError[] = [];
+    for (let i = 0; i < settledResults.length; i++) {
+        const settled = settledResults[i];
+        if (settled.status === 'fulfilled') {
+            results.push(settled.value);
+        } else {
+            errors.push({
+                modelId: modelIds[i],
+                modelName: modelNames[i],
+                error: settled.reason,
+            });
+            config.logger.info(
+                `Model ${modelNames[i]} failed:`,
+                settled.reason
+            );
+        }
+    }
+
+    return { results, errors };
+}
+
+async function runWithConcurrency<T>(
+    tasks: Array<() => Promise<T>>,
+    maxConcurrency: number
+): Promise<PromiseSettledResult<T>[]> {
+    const settled: PromiseSettledResult<T>[] = new Array(tasks.length);
+    if (tasks.length === 0) {
+        return settled;
+    }
+
+    const concurrency = Math.max(1, Math.min(maxConcurrency, tasks.length));
+    let next = 0;
+
+    const worker = async () => {
+        while (next < tasks.length) {
+            const index = next;
+            next++;
+            try {
+                settled[index] = {
+                    status: 'fulfilled',
+                    value: await tasks[index](),
+                };
+            } catch (reason) {
+                settled[index] = { status: 'rejected', reason };
+            }
+        }
+    };
+
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    return settled;
+}
+
+function reportErrors(
+    logger: Logger,
+    errors: Error[],
+    stream: vscode.ChatResponseStream
+) {
+    if (errors.length === 0) {
+        return;
+    }
+
+    for (const error of errors) {
+        logger.info('Error: ', error.message, error.stack);
+    }
+
+    const errorString = errors.map((error) => ` - ${error.message}`).join('\n');
+    stream.markdown(
+        `\n${errors.length} error(s) occurred during review:\n${errorString}\n`
+    );
+}
+
+export function formatModelReviewError({
+    modelId,
+    modelName,
+    error,
+}: ModelReviewError) {
+    const message = error instanceof Error ? error.message : String(error);
+    const formattedMessage = `${modelName} (${modelId}) failed: ${message}`;
+    const formattedError =
+        error instanceof Error
+            ? new Error(formattedMessage, { cause: error })
+            : new Error(formattedMessage);
+
+    if (error instanceof Error) {
+        formattedError.name = error.name;
+    }
+
+    if (error instanceof Error && error.stack) {
+        const stackLines = error.stack.split('\n');
+        formattedError.stack = [
+            `${formattedError.name}: ${formattedError.message}`,
+            ...stackLines.slice(1),
+        ].join('\n');
+    }
+
+    return formattedError;
+}
+
+/** Reviews changes with a specific model */
+async function reviewWithModel(
+    config: Config,
+    reviewRequest: ReviewRequest,
+    modelId: string,
+    modelName: string,
+    progress: ReviewProgress,
+    token: vscode.CancellationToken
+): Promise<ModelReviewResult> {
+    // Create a config that uses the specific model
+    const modelConfig: Config = {
+        ...config,
+        getModel: () => config.getModel(modelId),
+    };
+
+    const result = await reviewDiff(modelConfig, reviewRequest, {
+        providerId: modelId,
+        progress,
+        cancellationToken: token,
+    });
+
+    return { modelId, modelName, result };
+}
+
+/** Display results from multiple models in separate sections */
+function showSeparateReviewResults(
+    config: Config,
+    results: ModelReviewResult[],
+    stream: vscode.ChatResponseStream,
+    token: vscode.CancellationToken
+) {
+    // Guard against empty results array
+    if (results.length === 0) {
+        if (token.isCancellationRequested) {
+            stream.markdown(
+                '\nCancelled. All models failed to complete the review; no results are available.\n'
+            );
+        } else {
+            stream.markdown(
+                '\nAll models failed to complete the review; no results are available.\n'
+            );
+        }
+        return;
+    }
+
+    if (token.isCancellationRequested) {
+        const hasAnyComments = results.some(
+            (r) => r.result.fileComments.length > 0
+        );
+        if (hasAnyComments) {
+            stream.markdown('\nCancelled, showing partial results.\n');
+        } else {
+            stream.markdown('\nCancelled.');
+            return;
+        }
+    }
+
+    const options = config.getOptions();
+    const allErrors: Error[] = [];
+
+    for (const { modelName, result } of results) {
+        if (token.isCancellationRequested) {
+            break;
+        }
+
+        // Add section heading if there are multiple models
+        if (results.length > 1) {
+            stream.markdown(`\n---\n*${modelName}*\n---\n`);
+        }
+
+        if (result.files.length === 0) {
+            stream.markdown('No changes found.\n');
+            continue;
+        }
+
+        const isTargetCheckedOut = result.request.scope.isTargetCheckedOut;
+        let noProblemsFound = true;
+
+        for (const file of result.fileComments) {
+            if (token.isCancellationRequested) {
+                break;
+            }
+
+            const filteredFileComments = file.comments.filter(
+                (comment) => comment.severity >= options.minSeverity
+            );
+
+            if (filteredFileComments.length > 0) {
+                stream.anchor(toUri(config, file.target));
+            }
+
+            for (const comment of filteredFileComments) {
+                stream.markdown(
+                    buildComment(config, comment, isTargetCheckedOut)
+                );
+                noProblemsFound = false;
+            }
+
+            if (filteredFileComments.length > 0) {
+                stream.markdown('\n\n');
+            }
+        }
+
+        if (noProblemsFound && result.errors.length === 0) {
+            const hiddenCount = countHiddenComments(
+                result.fileComments,
+                options.minSeverity
+            );
+            stream.markdown(
+                `${formatNoProblemsFoundMessage(hiddenCount, options.minSeverity)}\n`
+            );
+        }
+
+        if (!isTargetCheckedOut) {
+            stream.markdown(
+                '\nNote: The target branch or commit is not checked out, so line numbers may not match the current state.\n'
+            );
+        }
+
+        allErrors.push(...result.errors);
+    }
+
+    reportErrors(config.logger, allErrors, stream);
+}
+
+/** Counts comments hidden because their severity is below `minSeverity` */
+export function countHiddenComments(
+    fileComments: FileComments[],
+    minSeverity: number
+): number {
+    return fileComments
+        .flatMap((file) => file.comments)
+        .filter((comment) => comment.severity < minSeverity).length;
+}
+
+/**
+ * Message for a review without visible comments. Mentions comments hidden by
+ * `minSeverity`, so the result isn't mistaken for a clean review.
+ */
+export function formatNoProblemsFoundMessage(
+    hiddenCount: number,
+    minSeverity: number
+): string {
+    if (hiddenCount === 0) {
+        return 'No problems found.';
+    }
+
+    const hiddenComments =
+        hiddenCount === 1
+            ? '1 comment with lower severity is'
+            : `${hiddenCount} comments with lower severity are`;
+    return `No problems with severity ${minSeverity} or higher found. ${hiddenComments} hidden, lower the \`Code Review: Min Severity\` setting to show them.`;
+}
+
+/**
+ * Collect all review comments from multiple models into a flat list with
+ * model attribution.  Comments below `minSeverity` are filtered out.  The
+ * returned list is grouped by file and sorted by line number within each
+ * file, with file-level comments (line 0) first.
+ */
+export function collectAttributedComments(
+    results: ModelReviewResult[],
+    minSeverity: number
+): Map<string, ReviewComment[]> {
+    const all: ReviewComment[] = [];
+
+    for (const { modelName, result } of results) {
+        for (const file of result.fileComments) {
+            for (const comment of file.comments) {
+                if (comment.severity < minSeverity) {
+                    continue;
+                }
+                all.push({
+                    ...comment,
+                    model: modelName,
+                });
+            }
+        }
+    }
+
+    // Group by file
+    const grouped = new Map<string, ReviewComment[]>();
+    for (const c of all) {
+        const existing = grouped.get(c.file);
+        if (existing) {
+            existing.push(c);
+        } else {
+            grouped.set(c.file, [c]);
+        }
+    }
+
+    // Sort by line within each file
+    for (const comments of grouped.values()) {
+        comments.sort((a, b) => a.line - b.line);
+    }
+
+    return grouped;
+}
+
+/** Display merged results from multiple models with attribution */
+function showMergedReviewResults(
+    config: Config,
+    results: ModelReviewResult[],
+    stream: vscode.ChatResponseStream,
+    token: vscode.CancellationToken
+) {
+    // Guard against empty results array
+    if (results.length === 0) {
+        stream.markdown('\nNo results.\n');
+        return;
+    }
+
+    if (token.isCancellationRequested) {
+        const hasAnyComments = results.some(
+            (r) => r.result.fileComments.length > 0
+        );
+        if (hasAnyComments) {
+            stream.markdown('\nCancelled, showing partial results.\n');
+        } else {
+            stream.markdown('\nCancelled.');
+            return;
+        }
+    }
+
+    const options = config.getOptions();
+
+    // Collect all comments with model attribution
+    const fileComments = collectAttributedComments(
+        results,
+        options.minSeverity
+    );
+
+    // Collect errors first so we don't skip them on early return
+    const allErrors = results.flatMap((r) => r.result.errors);
+
+    if (fileComments.size === 0) {
+        // Check if there were any files to review
+        const hasFilesToReview = results.some((r) => r.result.files.length > 0);
+        if (hasFilesToReview) {
+            const hiddenCount = countHiddenComments(
+                results.flatMap((r) => r.result.fileComments),
+                options.minSeverity
+            );
+            stream.markdown(
+                `\n${formatNoProblemsFoundMessage(hiddenCount, options.minSeverity)}\n`
+            );
+        } else {
+            stream.markdown('\nNo changes found.\n');
+        }
+        // Still report any errors that occurred
+        reportErrors(config.logger, allErrors, stream);
+        return;
+    }
+
+    // Determine if all reviewed scopes had the target checked out
+    const isTargetCheckedOut = results.every(
+        (r) => r.result.request.scope.isTargetCheckedOut
+    );
+
+    // Display comments grouped by file
+    for (const [filePath, comments] of fileComments) {
+        if (token.isCancellationRequested) {
+            break;
+        }
+
+        stream.anchor(toUri(config, filePath));
+
+        for (const comment of comments) {
+            stream.markdown(
+                buildComment(
+                    config,
+                    comment,
+                    isTargetCheckedOut,
+                    results.length > 1
+                )
+            );
+        }
+
+        stream.markdown('\n\n');
+    }
+
+    if (!isTargetCheckedOut) {
+        stream.markdown(
+            '\nNote: The target branch or commit is not checked out, so line numbers may not match the current state.\n'
+        );
+    }
+
+    // Report any errors that occurred
+    reportErrors(config.logger, allErrors, stream);
+}
