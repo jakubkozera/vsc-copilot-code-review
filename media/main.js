@@ -16,6 +16,8 @@
     const dropdownArrow = document.getElementById('dropdownArrow');
     const previewSection = document.getElementById('previewSection');
     const previewFiles = document.getElementById('previewFiles');
+    const viewModeListButton = document.getElementById('viewModeList');
+    const viewModeTreeButton = document.getElementById('viewModeTree');
     const statusSection = document.getElementById('statusSection');
     const statusMessage = document.getElementById('statusMessage');
     const progressBar = document.getElementById('progressBar');
@@ -32,6 +34,11 @@
     let isDropdownOpen = false;
     let currentResults = [];
     let isChatReviewMode = false; // Flag to indicate we're displaying chat review results
+    let filesViewMode = vscode.getState()?.filesViewMode === 'list' ? 'list' : 'tree';
+    let filesData = null; // last loaded files list incl. theme icons
+    const collapsedFolders = new Set();
+    const TREE_INDENT = 8; // px per tree level
+    const CHEVRON_WIDTH = 18; // px, keeps files aligned with sibling folder names
 
     // Initialize
     window.addEventListener('load', () => {
@@ -55,6 +62,12 @@
                 vscode.postMessage({ type: 'selectTargetBranch' });
             }
         });
+
+        // Files to review: list/tree toggle and file clicks
+        viewModeListButton?.addEventListener('change', () => setFilesViewMode('list'));
+        viewModeTreeButton?.addEventListener('change', () => setFilesViewMode('tree'));
+        previewFiles?.addEventListener('click', handlePreviewFilesClick);
+        renderFiles();
 
         // Dropdown functionality
         if (mainArea) {
@@ -269,7 +282,7 @@
                 updateReviewButtons();
                 break;
             case 'filesListLoaded':
-                handleFilesListLoaded(message.files, message.baseBranch, message.targetBranch);
+                handleFilesListLoaded(message.files, message.baseBranch, message.targetBranch, message.fileIcons, message.folderIcons);
                 break;
             case 'reviewStarted':
                 handleReviewStarted();
@@ -377,7 +390,7 @@
         }
     }
 
-    function handleFilesListLoaded(files, baseBranch, targetBranch) {
+    function handleFilesListLoaded(files, baseBranch, targetBranch, fileIcons, folderIcons) {
         // Don't update UI if we're in chat review mode
         if (isChatReviewMode) {
             console.log('Skipping handleFilesListLoaded - in chat review mode');
@@ -387,6 +400,7 @@
         previewSection?.classList.remove('hidden');
         
         if (!files || files.length === 0) {
+            filesData = null;
             if (previewFiles) {
                 previewFiles.innerHTML = `
                     <div class="file-item">No files changed between <strong>${baseBranch}</strong> and <strong>${targetBranch}</strong></div>
@@ -395,40 +409,118 @@
             return;
         }
 
-        let html = `<div class="file-item" style="display:block;">Reviewing changes from <strong>${baseBranch}</strong> to <strong>${targetBranch}</strong></div>`;
-        
-        files.forEach(file => {
-            const fileName = getFileName(file.name);
-            const statusClass = getStatusClass(file.status);
-            const fileIcon = getFileIcon();
-            html += `<div class="file-item clickable-file ${statusClass}" data-file-path="${escapeHtml(file.name)}" data-base-branch="${escapeHtml(baseBranch)}" data-target-branch="${escapeHtml(targetBranch)}" title="Click to view diff">${fileIcon}${fileName}</div>`;
-        });
-        
-        html += `<div class="file-item">Click a review button to start analysis...</div>`;
-        
-        if (previewFiles) {
-            previewFiles.innerHTML = html;
-            
-            // Add click event listeners to file items
-            const clickableFiles = previewFiles.querySelectorAll('.clickable-file[data-file-path]');
-            clickableFiles.forEach(fileElement => {
-                fileElement.addEventListener('click', () => {
-                    const filePath = fileElement.getAttribute('data-file-path');
-                    const baseBranch = fileElement.getAttribute('data-base-branch');
-                    const targetBranch = fileElement.getAttribute('data-target-branch');
-                    
-                    if (filePath && baseBranch && targetBranch) {
-                        console.log('File clicked:', { filePath, baseBranch, targetBranch });
-                        vscode.postMessage({
-                            type: 'openFileDiff',
-                            filePath: filePath,
-                            baseBranch: baseBranch,
-                            targetBranch: targetBranch
-                        });
-                    }
-                });
+        filesData = { files, baseBranch, targetBranch, fileIcons: fileIcons || {}, folderIcons: folderIcons || {} };
+        renderFiles();
+    }
+
+    function setFilesViewMode(mode) {
+        filesViewMode = mode;
+        vscode.setState({ ...(vscode.getState() || {}), filesViewMode: mode });
+        renderFiles();
+    }
+
+    function renderFiles() {
+        if (viewModeListButton) viewModeListButton.checked = filesViewMode === 'list';
+        if (viewModeTreeButton) viewModeTreeButton.checked = filesViewMode === 'tree';
+        if (!filesData || !previewFiles) {
+            return;
+        }
+
+        const { files } = filesData;
+        const html = filesViewMode === 'tree'
+            ? renderTreeNodes(buildFileTree(files), 0)
+            : files.map((file) => renderFileItem(file)).join('');
+        previewFiles.classList.toggle('tree-mode', filesViewMode === 'tree');
+        previewFiles.innerHTML = html;
+    }
+
+    function handlePreviewFilesClick(event) {
+        const target = event.target instanceof Element ? event.target : null;
+        const folderElement = target?.closest('.tree-folder[data-folder-path]');
+        if (folderElement) {
+            const folderPath = folderElement.getAttribute('data-folder-path');
+            if (collapsedFolders.has(folderPath)) {
+                collapsedFolders.delete(folderPath);
+            } else {
+                collapsedFolders.add(folderPath);
+            }
+            renderFiles();
+            return;
+        }
+
+        const fileElement = target?.closest('.clickable-file[data-file-path]');
+        const filePath = fileElement?.getAttribute('data-file-path');
+        if (filePath && filesData) {
+            vscode.postMessage({
+                type: 'openFileDiff',
+                filePath: filePath,
+                baseBranch: filesData.baseBranch,
+                targetBranch: filesData.targetBranch
             });
         }
+    }
+
+    /** Folders first, then files; both sorted A-Z (same order as the GitHub pull request view). */
+    function buildFileTree(files) {
+        const root = { folders: new Map(), files: [] };
+        for (const file of files) {
+            const parts = file.name.split('/');
+            const fileName = parts.pop();
+            let node = root;
+            parts.forEach((part, index) => {
+                if (!node.folders.has(part)) {
+                    node.folders.set(part, { name: part, path: parts.slice(0, index + 1).join('/'), folders: new Map(), files: [] });
+                }
+                node = node.folders.get(part);
+            });
+            node.files.push({ file, fileName });
+        }
+        return root;
+    }
+
+    function renderTreeNodes(node, depth) {
+        const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+        let html = '';
+
+        const folders = [...node.folders.values()].sort((a, b) => byName(a.name, b.name));
+        for (const folder of folders) {
+            const isCollapsed = collapsedFolders.has(folder.path);
+            html += `<div class="file-item tree-folder" style="padding-left:${4 + depth * TREE_INDENT}px" data-folder-path="${escapeAttr(folder.path)}" title="${escapeAttr(folder.path)}">${getChevronIcon(!isCollapsed)}${getFolderIcon(folder.name, !isCollapsed)}<span class="file-name">${escapeHtml(folder.name)}</span></div>`;
+            if (!isCollapsed) {
+                html += renderTreeNodes(folder, depth + 1);
+            }
+        }
+
+        const files = [...node.files].sort((a, b) => byName(a.fileName, b.fileName));
+        for (const { file, fileName } of files) {
+            // align with folder rows, which have an additional chevron
+            html += renderFileItem(file, fileName, 4 + depth * TREE_INDENT + CHEVRON_WIDTH);
+        }
+        return html;
+    }
+
+    function renderFileItem(file, fileName = getFileName(file.name), paddingLeft) {
+        const statusClass = getStatusClass(file.status);
+        const style = paddingLeft === undefined ? '' : ` style="padding-left:${paddingLeft}px"`;
+        return `<div class="file-item clickable-file ${statusClass}"${style} data-file-path="${escapeAttr(file.name)}" title="${escapeAttr(file.name)}">${getThemeFileIcon(file.name)}<span class="file-name">${escapeHtml(fileName)}</span></div>`;
+    }
+
+    function getThemeFileIcon(filePath) {
+        const uri = filesData?.fileIcons[filePath];
+        return uri ? `<img class="file-icon-img" src="${escapeAttr(uri)}" alt="">` : getFileIcon();
+    }
+
+    function getFolderIcon(name, expanded) {
+        const icons = filesData?.folderIcons[name.toLowerCase()];
+        const uri = expanded ? icons?.expanded || icons?.collapsed : icons?.collapsed;
+        if (uri) {
+            return `<img class="file-icon-img" src="${escapeAttr(uri)}" alt="">`;
+        }
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="file-icon"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2" /></svg>`;
+    }
+
+    function getChevronIcon(expanded) {
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tree-chevron"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="${expanded ? 'M6 9l6 6l6 -6' : 'M9 6l6 6l-6 6'}" /></svg>`;
     }
 
     function getFileName(filePath) {
@@ -738,6 +830,10 @@
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function escapeAttr(text) {
+        return escapeHtml(text).replace(/"/g, '&quot;');
     }
 
     function generateProposedAdjustmentHTML(proposedAdjustment, filePath) {

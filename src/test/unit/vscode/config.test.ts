@@ -22,8 +22,6 @@ import type { LanguageModelChat } from 'vscode';
 
 import { getConfig } from '@/vscode/config';
 import {
-    defaultFallbackModelId,
-    defaultFallbackModelName,
     defaultModelId,
     defaultPreferredModelIds,
 } from '@/vscode/defaultModels';
@@ -637,14 +635,18 @@ describe('loadReviewProvider fallback offer', () => {
     let updateMock: ReturnType<typeof vi.fn>;
     let consoleInfoSpy: ReturnType<typeof vi.spyOn>;
 
-    function fakeModel(id: string, vendor: string): LanguageModelChat {
+    function fakeModel(
+        id: string,
+        vendor: string,
+        maxInputTokens = 1000
+    ): LanguageModelChat {
         return {
             id,
             vendor,
             name: id,
             family: id,
             version: '1',
-            maxInputTokens: 1000,
+            maxInputTokens,
             countTokens: async () => 0,
             sendRequest: async () => ({}),
         } as unknown as LanguageModelChat;
@@ -672,44 +674,78 @@ describe('loadReviewProvider fallback offer', () => {
         consoleInfoSpy.mockRestore();
     });
 
-    it('offers the fallback when the default model is unavailable and persists the choice', async () => {
-        const config = await getConfig({ refreshWorkspace: true });
-        const [fallbackVendor, fallbackId] = defaultFallbackModelId.split(':');
-
-        // default model resolves to nothing; only the fallback is available
+    // like vscode.lm: filters by id if a selector is given
+    function mockAvailableModels(available: LanguageModelChat[]) {
         vscodeMocks.selectChatModels.mockImplementation(
             async (selector?: { id?: string }) =>
-                selector?.id === fallbackId
-                    ? [fakeModel(fallbackId, fallbackVendor)]
-                    : []
+                selector?.id
+                    ? available.filter((model) => model.id === selector.id)
+                    : available
         );
+    }
+
+    it('offers the best available model when the default is unavailable and persists the choice', async () => {
+        const config = await getConfig({ refreshWorkspace: true });
+        mockAvailableModels([
+            fakeModel('gpt-4o-mini', 'copilot', 1000),
+            fakeModel('some-large-model', 'copilot', 200000),
+            fakeModel('some-medium-model', 'copilot', 50000),
+        ]);
         vscodeMocks.showErrorMessage.mockResolvedValue(
-            `Switch to ${defaultFallbackModelName}`
+            'Switch to some-large-model'
         );
 
         const model = await config.getModel(defaultModelId);
 
-        expect(model.name).toBe(fallbackId);
+        expect(model.name).toBe('some-large-model');
         expect(updateMock).toHaveBeenCalledWith(
             'chatModel',
-            defaultFallbackModelId,
+            'copilot:some-large-model',
             expect.anything()
         );
     });
 
-    it('does not offer the fallback for an explicitly chosen non-default model', async () => {
+    it('prefers preferred models over larger context windows', async () => {
+        const config = await getConfig({ refreshWorkspace: true });
+        mockAvailableModels([
+            fakeModel('some-large-model', 'copilot', 200000),
+            fakeModel('claude-sonnet-4.6', 'copilot', 1000),
+        ]);
+        vscodeMocks.showErrorMessage.mockResolvedValue(
+            'Switch to claude-sonnet-4.6'
+        );
+
+        const model = await config.getModel(defaultModelId);
+
+        expect(model.name).toBe('claude-sonnet-4.6');
+    });
+
+    it('does not offer unsupported models or a fallback if none is available', async () => {
+        const config = await getConfig({ refreshWorkspace: true });
+        mockAvailableModels([fakeModel('auto', 'copilot', 200000)]);
+        vscodeMocks.showErrorMessage.mockResolvedValue(undefined);
+
+        await expect(config.getModel(defaultModelId)).rejects.toThrow();
+
+        const offeredOptions =
+            vscodeMocks.showErrorMessage.mock.calls[0]?.slice(1) ?? [];
+        expect(offeredOptions).toEqual(['Select Review Provider']);
+    });
+
+    it('does not offer a fallback for an explicitly chosen non-default model', async () => {
         const config = await getConfig({ refreshWorkspace: true });
 
-        vscodeMocks.selectChatModels.mockResolvedValue([]);
+        mockAvailableModels([fakeModel('some-large-model', 'copilot', 200000)]);
         vscodeMocks.showErrorMessage.mockResolvedValue(undefined);
 
         await expect(config.getModel('copilot:some-model')).rejects.toThrow();
 
         const offeredOptions =
             vscodeMocks.showErrorMessage.mock.calls[0]?.slice(1) ?? [];
-        expect(offeredOptions).not.toContain(
-            `Switch to ${defaultFallbackModelName}`
-        );
+        expect(offeredOptions).toEqual([
+            `Reset to Default (${defaultModelId})`,
+            'Select Review Provider',
+        ]);
         expect(updateMock).not.toHaveBeenCalled();
     });
 });

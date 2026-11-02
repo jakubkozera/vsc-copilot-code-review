@@ -7,6 +7,7 @@ import { ProposedAdjustment, ReviewComment } from '@/types/ReviewComment';
 import { ReviewRequest, ReviewScope } from '@/types/ReviewRequest';
 import { ReviewResult } from '@/types/ReviewResult';
 import { getConfig } from './config';
+import { FileIconThemeService } from './fileIconTheme';
 
 type WebviewMessage =
     | { type: 'getBranches' }
@@ -56,6 +57,7 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
     private _currentCommentIndex: number = -1;
     private _commentThreads: vscode.CommentThread[] = [];
     private _statusBarItem?: vscode.StatusBarItem;
+    private readonly _iconTheme = new FileIconThemeService();
 
     constructor(private readonly _extensionUri: vscode.Uri) {
         this._statusBarItem = vscode.window.createStatusBarItem(
@@ -283,6 +285,10 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                 baseBranch
             );
             const changedFiles = await this._config.git.getChangedFiles(scope);
+            const { fileIcons, folderIcons } =
+                await this._iconTheme.resolvePathIcons(
+                    changedFiles.map((file) => file.file)
+                );
 
             this._view?.webview.postMessage({
                 type: 'filesListLoaded',
@@ -291,6 +297,8 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                     status: file.status,
                     from: file.from,
                 })),
+                fileIcons,
+                folderIcons,
                 baseBranch,
                 targetBranch,
             });
@@ -846,6 +854,8 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
         if (this._statusBarItem) {
             this._statusBarItem.dispose();
         }
+
+        this._iconTheme.dispose();
     }
 
     public async displayChatReviewResults(results: ReviewResult) {
@@ -1250,7 +1260,7 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src data:; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="${styleResetUri.toString()}" rel="stylesheet">
     <link href="${styleVSCodeUri.toString()}" rel="stylesheet">
@@ -1340,6 +1350,13 @@ export class CodeReviewPanel implements vscode.WebviewViewProvider {
                 </svg>
             </h3>
             <div class="section-content" id="previewContent">
+                <div class="files-toolbar">
+                    <span class="files-toolbar-label" id="viewModeLabel">View as</span>
+                    <div class="view-toggle" role="radiogroup" aria-labelledby="viewModeLabel">
+                        <label class="view-toggle-option"><input type="radio" name="filesViewMode" value="list" id="viewModeList"><span>List</span></label>
+                        <label class="view-toggle-option"><input type="radio" name="filesViewMode" value="tree" id="viewModeTree"><span>Tree</span></label>
+                    </div>
+                </div>
                 <div id="previewFiles" class="file-preview">
                     <!-- File preview will be populated here -->
                 </div>

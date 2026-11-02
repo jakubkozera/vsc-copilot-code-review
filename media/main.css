@@ -485,6 +485,102 @@ body {
     opacity: 0.7;
 }
 
+.file-icon-img {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.file-item.status-deleted .file-icon-img {
+    opacity: 0.6;
+    filter: grayscale(100%);
+}
+
+.file-item .file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-item.tree-folder {
+    gap: 4px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.file-item.tree-folder:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.tree-chevron {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    opacity: 0.8;
+}
+
+.file-preview.tree-mode {
+    gap: 0;
+}
+
+.file-preview.tree-mode .file-item {
+    gap: 4px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    padding-right: 4px;
+}
+
+.files-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 12px;
+}
+
+.view-toggle {
+    display: inline-flex;
+    border: 1px solid var(--vscode-button-secondaryBackground, var(--vscode-input-border));
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.view-toggle-option {
+    position: relative;
+    cursor: pointer;
+}
+
+.view-toggle-option input {
+    position: absolute;
+    opacity: 0;
+    inset: 0;
+    margin: 0;
+    cursor: pointer;
+}
+
+.view-toggle-option span {
+    display: block;
+    padding: 2px 10px;
+    color: var(--vscode-foreground);
+    opacity: 0.8;
+}
+
+.view-toggle-option:hover span {
+    background-color: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+    opacity: 1;
+}
+
+.view-toggle-option input:checked + span {
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    opacity: 1;
+}
+
+.view-toggle-option input:focus-visible + span {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
 .status-message {
     font-size: 13px;
     padding: 8px 0;

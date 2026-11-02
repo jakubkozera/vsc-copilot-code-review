@@ -3,6 +3,10 @@
 ## [1.0.0]
 Synced with upstream [cpulvermacher/lgtm](https://github.com/cpulvermacher/lgtm) 1.9.1.
 
+- "Files to Review" now shows icons from the active file icon theme and can be switched between list and tree view (tree: folders first, A-Z, as on GitHub pull requests).
+- If the default review model is unavailable, the best available model is offered as a replacement (instead of a hardcoded one).
+- Update minimatch to fix a known vulnerability.
+
 - Breaking: all commands, settings, and the chat participant now use the `codeReview` namespace (e.g. `codeReview.chatModel`, `@codereview`). `/branch` and `/commit` chat commands were removed, use `/review` or `Code Review: Start Code Review...`.
 - Fixed `command 'lgtm.selectChatModel' not found` and `Couldn't find chat model` errors caused by leftover `lgtm` identifiers.
 - Added `Code Review: Start Code Review...`, `Review Staged Changes`, `Review Unstaged Changes` commands and Source Control buttons.

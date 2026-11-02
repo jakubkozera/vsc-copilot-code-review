@@ -54,6 +54,35 @@ export async function getChatModel(modelId: string): Promise<Model> {
     };
 }
 
+/**
+ * Best available alternative for a model that couldn't be loaded: preferred models
+ * first, then supported models with the largest context window.
+ */
+export async function findFallbackModel(
+    unavailableId: string
+): Promise<{ id: string; name: string } | undefined> {
+    const models = await vscode.lm.selectChatModels();
+    const candidates = (models ?? [])
+        .filter((model) => !isUnSupportedModel(model))
+        .map((model) => ({
+            id: `${model.vendor}:${model.id}`,
+            name: model.name ?? model.id,
+            maxInputTokens: model.maxInputTokens,
+        }))
+        .filter((candidate) => candidate.id !== unavailableId);
+
+    const { preferredProviderIds } = getModelPickerPreferences();
+    const rank = (id: string) => {
+        const index = preferredProviderIds.indexOf(id);
+        return index === -1 ? preferredProviderIds.length : index;
+    };
+    candidates.sort(
+        (a, b) => rank(a.id) - rank(b.id) || b.maxInputTokens - a.maxInputTokens
+    );
+
+    return candidates[0];
+}
+
 // can be either "vendor:id" or legacy "id"
 function parseToSelector(modelIdWithVendor: string) {
     if (!modelIdWithVendor.includes(':')) {
